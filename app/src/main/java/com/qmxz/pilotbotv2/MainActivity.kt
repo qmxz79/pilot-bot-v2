@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var speedText: TextView
     private lateinit var waveform: WaveformView
     private lateinit var micButton: MaterialButton
+    private lateinit var interruptButton: Button
     private lateinit var textInput: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,7 +72,8 @@ class MainActivity : AppCompatActivity() {
         transcriptAdapter = TranscriptAdapter(findViewById(R.id.transcript_container))
 
         micButton.setOnClickListener { viewModel.onMicPressed() }
-        findViewById<Button>(R.id.btn_interrupt).setOnClickListener {
+        interruptButton = findViewById(R.id.btn_interrupt)
+        interruptButton.setOnClickListener {
             viewModel.onInterrupt()
         }
         findViewById<Button>(R.id.btn_settings).setOnClickListener {
@@ -128,7 +130,13 @@ class MainActivity : AppCompatActivity() {
             "车速：${status.speedKmh.toInt()} km/h · ${status.scene.displayName}"
         healthText.text = status.healthSummary
         navText.text = status.navSummary
+        // Buttons reflect capability, not just state: on a phone without a
+        // recognition service the mic button must not invite a tap that can
+        // only fail again, and interrupt is meaningless when nothing plays.
+        interruptButton.isEnabled = status.speaking || status.listening
+        micButton.isEnabled = status.asrAvailable
         micButton.text = when {
+            !status.asrAvailable -> getString(R.string.mic_unavailable)
             status.listening -> getString(R.string.mic_listening)
             status.speaking -> getString(R.string.mic_speaking)
             else -> getString(R.string.mic_start)

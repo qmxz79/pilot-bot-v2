@@ -43,6 +43,8 @@ import kotlinx.coroutines.launch
 data class UiStatus(
     val speaking: Boolean = false,
     val listening: Boolean = false,
+    /** False when the health check found no recognition service: mic must not invite a doomed tap. */
+    val asrAvailable: Boolean = true,
     val speedKmh: Float = 0f,
     val scene: DriveScene = DriveScene.CRUISE,
     val healthSummary: String = "自检中…",
@@ -95,6 +97,9 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
 
     private var llmJob: Job? = null
 
+    /** Pipeline error messages already shown this session (spam guard). */
+    private val reportedPipelineErrors = HashSet<String>()
+
     /** Guards late LLM callbacks from a cancelled/interrupted stream. */
     private var activeStreamId: Int = 0
     private var released: Boolean = false
@@ -124,6 +129,18 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
             }
 
             override fun onError(message: String) {
+                // Same failure (dead TTS engine, missing ASR service) would
+                // otherwise post one SYSTEM row per reply. Real-device
+                // finding 2026-10-28: a phone without Google voice services
+                // spammed "系统语音引擎初始化失败" after every answer.
+                // Report each distinct message once per session; a health
+                // re-run clears the set so a fixed engine can report again.
+                if (!reportedPipelineErrors.add(message)) {
+                    if (pipeline.state != PipelineState.SPEAKING) {
+                        updateStatus { copy(speaking = false, listening = false) }
+                    }
+                    return
+                }
                 postTranscript(TranscriptItem(TranscriptRole.SYSTEM, message))
                 // While SPEAKING, onError is a non-fatal VAD warning (speech
                 // continues) or a TTS error (onSpeakingFinished follows and
@@ -282,12 +299,22 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun runHealthCheck() {
+        // A fresh self-check re-arms error reporting: if the user just
+        // installed a voice engine, its next failure deserves one new row.
+        reportedPipelineErrors.clear()
         healthCheck.run { items ->
             val summary = items.joinToString(" · ") { item ->
                 "${item.name}${if (item.ok) "✓" else "✗"}：${item.message}"
             }
-            updateStatus { copy(healthSummary = summary) }
-            pipeline.speakText(healthCheck.spokenSummary(items))
+            val asrOk = items.firstOrNull { it.name == "语音识别" }?.ok ?: true
+            val ttsOk = items.firstOrNull { it.name == "语音合成" }?.ok ?: true
+            updateStatus { copy(healthSummary = summary, asrAvailable = asrOk) }
+            // Never "speak" the summary through a dead engine: that only
+            // produced one more TTS-failure row per health run on devices
+            // without voice services. The visual summary already shows it.
+            if (ttsOk) {
+                pipeline.speakText(healthCheck.spokenSummary(items))
+            }
         }
     }
 

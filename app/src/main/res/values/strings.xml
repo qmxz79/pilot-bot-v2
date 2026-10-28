@@ -11,6 +11,7 @@
     <string name="mic_start">开始说话</string>
     <string name="mic_listening">正在听…</string>
     <string name="mic_speaking">正在说…</string>
+    <string name="mic_unavailable">语音输入不可用</string>
     <string name="interrupt">打断</string>
     <string name="settings">设置</string>
     <string name="send">发送</string>
