@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">副驾搭子 v2</string>
+    <string name="health_unknown">自检中…</string>
+    <string name="nav_unknown">定位：初始化中…</string>
+    <string name="speed_unknown">车速：— km/h</string>
+    <string name="scene_jam">堵车</string>
+    <string name="scene_night">深夜</string>
+    <string name="scene_fatigue">疲劳</string>
+    <string name="scene_cruise">巡航</string>
+    <string name="mic_start">开始说话</string>
+    <string name="mic_listening">正在听…</string>
+    <string name="mic_speaking">正在说…</string>
+    <string name="interrupt">打断</string>
+    <string name="settings">设置</string>
+    <string name="send">发送</string>
+    <string name="text_input_hint">没法说话时，在这里打字…</string>
+    <string name="settings_title">连接设置</string>
+    <string name="settings_hint">Key 只存在本机 SharedPreferences，不会上传到任何地方。高德 Key 请写进 local.properties，不要填在这里。</string>
+    <string name="base_url_label">LLM 地址（OpenAI 兼容）</string>
+    <string name="api_key_label">LLM Key</string>
+    <string name="model_label">模型名</string>
+    <string name="persona_label">人设</string>
+    <string name="persona_warm">暖心朋友</string>
+    <string name="persona_steady">沉稳老哥</string>
+    <string name="persona_witty">毒舌损友</string>
+    <string name="dialog_ok">保存</string>
+    <string name="dialog_cancel">取消</string>
+</resources>

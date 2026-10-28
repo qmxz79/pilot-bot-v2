@@ -1,0 +1,63 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// AMAP_KEY is read from local.properties (never committed). Empty = Amap provider
+// reports "key not configured" and the app falls back to system GPS.
+def localProps = new Properties()
+def localPropsFile = rootProject.file("local.properties")
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { stream -> localProps.load(stream) }
+}
+def amapKey = localProps.getProperty("AMAP_KEY", "")
+
+android {
+    namespace 'com.qmxz.pilotbotv2'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.qmxz.pilotbotv2"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "2.0.0"
+        // Manifest placeholder used by the Amap SDK meta-data (harmless when empty).
+        manifestPlaceholders = [AMAP_KEY: amapKey]
+        // BuildConfig field used by AmapNavigationProvider for its self-check.
+        buildConfigField "String", "AMAP_KEY", "\"${amapKey}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    // Deliberately minimal: AndroidX core/appcompat/material, lifecycle, coroutines, OkHttp.
+    // No 3D/GL engine, no map binary dependency. The Amap SDK (if fetched) is loaded
+    // reflectively by AmapNavigationProvider and is never a compile dependency here.
+    // NOTE: no RecyclerView on purpose — the transcript is append-only and short-lived,
+    // so TranscriptAdapter renders into a LinearLayout instead of adding a dependency.
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

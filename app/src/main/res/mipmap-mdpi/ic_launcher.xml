@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fallback launcher icon (vector, no binaries). minSdk is 26 so the
+     anydpi-v26 adaptive icon is the one actually used on all supported devices. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFB300"
+        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0" />
+    <path
+        android:fillColor="#121212"
+        android:pathData="M46,30h16a8,8 0,0 1,8 8v16a8,8 0,0 1,-8 8H46a8,8 0,0 1,-8 -8V38a8,8 0,0 1,8 -8z" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M38,62a16,16 0,0 0,32 0"
+        android:strokeColor="#121212"
+        android:strokeWidth="4" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,78v10"
+        android:strokeColor="#121212"
+        android:strokeWidth="4"
+        android:strokeLineCap="round" />
+</vector>

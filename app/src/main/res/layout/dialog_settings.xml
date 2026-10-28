@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/base_url_label"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_base_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textUri"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/api_key_label"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_api_key"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textPassword"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/model_label"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_model"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/persona_label"
+            android:textSize="16sp" />
+
+        <RadioGroup
+            android:id="@+id/rg_persona"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rb_persona_warm"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/persona_warm"
+                android:textSize="16sp" />
+
+            <RadioButton
+                android:id="@+id/rb_persona_steady"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/persona_steady"
+                android:textSize="16sp" />
+
+            <RadioButton
+                android:id="@+id/rb_persona_witty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/persona_witty"
+                android:textSize="16sp" />
+        </RadioGroup>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/settings_hint"
+            android:textColor="#9E9E9E"
+            android:textSize="14sp" />
+    </LinearLayout>
+</ScrollView>

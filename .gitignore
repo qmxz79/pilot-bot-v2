@@ -1,0 +1,23 @@
+# Local machine config / secrets — never commit.
+local.properties
+*.jks
+*.keystore
+*.env
+*secret*
+credentials*
+
+# Build outputs.
+build/
+.gradle/
+
+# IDE files, except shared run configurations.
+.idea/*
+!.idea/runConfigurations/
+*.iml
+
+# Map SDK binaries fetched by scripts/fetch-amap-sdk.sh (never commit binaries).
+app/libs/
+*.aar
+
+# OS files.
+.DS_Store

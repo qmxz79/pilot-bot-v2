@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Voice-first driving UI: transcript + waveform + big buttons. No avatar, no map view. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/health_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/health_unknown"
+        android:textColor="#9E9E9E"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/nav_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/nav_unknown"
+        android:textColor="#9E9E9E"
+        android:textSize="14sp" />
+
+    <ScrollView
+        android:id="@+id/transcript_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="12dp">
+
+        <LinearLayout
+            android:id="@+id/transcript_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+
+    <com.qmxz.pilotbotv2.ui.WaveformView
+        android:id="@+id/waveform"
+        android:layout_width="match_parent"
+        android:layout_height="96dp"
+        android:layout_marginTop="8dp" />
+
+    <TextView
+        android:id="@+id/speed_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:text="@string/speed_unknown"
+        android:textColor="#FFFFFF"
+        android:textSize="18sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_scene_jam"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1"
+            android:text="@string/scene_jam"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_scene_night"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1"
+            android:text="@string/scene_night"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_scene_fatigue"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1"
+            android:text="@string/scene_fatigue"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_scene_cruise"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1"
+            android:text="@string/scene_cruise"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_interrupt"
+            android:layout_width="0dp"
+            android:layout_height="64dp"
+            android:layout_weight="1"
+            android:text="@string/interrupt"
+            android:textSize="18sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_mic"
+            android:layout_width="0dp"
+            android:layout_height="64dp"
+            android:layout_weight="2"
+            android:text="@string/mic_start"
+            android:textSize="18sp" />
+
+        <Button
+            android:id="@+id/btn_settings"
+            android:layout_width="0dp"
+            android:layout_height="64dp"
+            android:layout_weight="1"
+            android:text="@string/settings"
+            android:textSize="18sp" />
+    </LinearLayout>
+
+    <!-- Text fallback: when ASR is unavailable the app must still be usable. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <EditText
+            android:id="@+id/et_text_input"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1"
+            android:hint="@string/text_input_hint"
+            android:inputType="text"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#9E9E9E"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btn_send"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:text="@string/send"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+</LinearLayout>

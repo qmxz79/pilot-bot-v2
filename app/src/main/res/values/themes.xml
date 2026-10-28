@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark, driving-friendly theme: big touch targets, high contrast, no avatar. -->
+    <style name="Theme.PilotBotV2" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#FFB300</item>
+        <item name="colorOnPrimary">#121212</item>
+        <item name="android:windowBackground">#121212</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+    </style>
+</resources>
