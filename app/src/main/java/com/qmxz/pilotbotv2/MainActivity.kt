@@ -47,6 +47,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var healthText: TextView
     private lateinit var navText: TextView
     private lateinit var speedText: TextView
+    private lateinit var partialText: TextView
     private lateinit var waveform: WaveformView
     private lateinit var micButton: MaterialButton
     private lateinit var interruptButton: Button
@@ -65,6 +66,7 @@ class MainActivity : AppCompatActivity() {
         healthText = findViewById(R.id.health_text)
         navText = findViewById(R.id.nav_text)
         speedText = findViewById(R.id.speed_text)
+        partialText = findViewById(R.id.partial_text)
         waveform = findViewById(R.id.waveform)
         micButton = findViewById(R.id.btn_mic)
         textInput = findViewById(R.id.et_text_input)
@@ -135,6 +137,12 @@ class MainActivity : AppCompatActivity() {
         // only fail again, and interrupt is meaningless when nothing plays.
         interruptButton.isEnabled = status.speaking || status.listening
         micButton.isEnabled = status.asrAvailable
+        if (status.partial.isEmpty()) {
+            partialText.visibility = View.GONE
+        } else {
+            partialText.visibility = View.VISIBLE
+            partialText.text = getString(R.string.partial_prefix) + status.partial
+        }
         micButton.text = when {
             !status.asrAvailable -> getString(R.string.mic_unavailable)
             status.listening -> getString(R.string.mic_listening)

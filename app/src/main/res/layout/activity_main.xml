@@ -38,6 +38,17 @@
             android:orientation="vertical" />
     </ScrollView>
 
+    <!-- Live ASR partial: what the mic is hearing right now (hidden when empty). -->
+    <TextView
+        android:id="@+id/partial_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textStyle="italic"
+        android:textColor="#BDBDBD"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
     <com.qmxz.pilotbotv2.ui.WaveformView
         android:id="@+id/waveform"
         android:layout_width="match_parent"

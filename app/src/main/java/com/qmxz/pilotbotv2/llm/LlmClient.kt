@@ -80,6 +80,7 @@ class LlmClient(
      */
     suspend fun streamChat(
         messages: List<ChatMessage>,
+        temperature: Double = 0.8,
         onToken: (String) -> Unit,
         onDone: (String) -> Unit,
         onError: (String) -> Unit
@@ -93,7 +94,7 @@ class LlmClient(
             val bodyJson = JSONObject().apply {
                 put("model", settings.model)
                 put("stream", true)
-                put("temperature", 0.8)
+                put("temperature", temperature)
                 val array = JSONArray()
                 messages.forEach { msg ->
                     array.put(
@@ -136,7 +137,7 @@ class LlmClient(
                     val line = try {
                         source.readUtf8Line()
                     } catch (e: IOException) {
-                        if (call.isCanceled) return@withContext else throw e
+                        if (call.isCanceled()) return@withContext else throw e
                     } ?: break
                     if (!line.startsWith("data:")) continue
                     val data = line.removePrefix("data:").trim()
@@ -162,13 +163,13 @@ class LlmClient(
                 val result = full.toString()
                 mainHandler.post { onDone(result) }
             } catch (e: IOException) {
-                if (!call.isCanceled) {
+                if (!call.isCanceled()) {
                     val message = e.message ?: "未知网络错误"
                     mainHandler.post { onError("网络错误：$message") }
                 }
                 // Cancelled calls exit quietly: the user interrupted on purpose.
             } catch (e: Exception) {
-                if (!call.isCanceled) {
+                if (!call.isCanceled()) {
                     mainHandler.post { onError("LLM 请求异常：${e.message}") }
                 }
             } finally {

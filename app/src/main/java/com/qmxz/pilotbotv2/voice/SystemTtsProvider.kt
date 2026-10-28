@@ -71,6 +71,12 @@ class SystemTtsProvider(context: Context) : TtsProvider, TextToSpeech.OnInitList
                     listeners.remove(utteranceId)?.onDone(utteranceId)
                 }
 
+                // Base class declares the one-arg form abstract; dispatch there too.
+                @Deprecated("deprecated in the platform API", ReplaceWith("onError(utteranceId, -1)"))
+                override fun onError(utteranceId: String) {
+                    onError(utteranceId, -1)
+                }
+
                 // Two-arg form is dispatched on API 23+ (minSdk is 26).
                 override fun onError(utteranceId: String, errorCode: Int) {
                     listeners.remove(utteranceId)?.onError(

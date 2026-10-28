@@ -16,6 +16,7 @@
     <string name="settings">设置</string>
     <string name="send">发送</string>
     <string name="text_input_hint">没法说话时，在这里打字…</string>
+    <string name="partial_prefix">听到：</string>
     <string name="settings_title">连接设置</string>
     <string name="settings_hint">Key 只存在本机 SharedPreferences，不会上传到任何地方。高德 Key 请写进 local.properties，不要填在这里。</string>
     <string name="base_url_label">LLM 地址（OpenAI 兼容）</string>

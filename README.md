@@ -38,8 +38,8 @@ app/src/main/java/com/qmxz/pilotbotv2/
 │   ├── PersonaCard.kt / PersonaPresets.kt      # 小搭 + 三套预设
 │   └── SystemPromptBuilder.kt # 每轮锚定人设 + 记忆 + 场景 + 车速分级
 ├── memory/
-│   ├── MemoryStore.kt         # filesDir 内 JSON，线程安全
-│   ├── MemoryExtractor.kt     # 规则抽取 + LLM 抽取 hook（未接线）
+│   ├── MemoryStore.kt         # filesDir 内 JSON，线程安全，容量上限 200
+│   ├── MemoryExtractor.kt     # 规则抽取（实时）+ LLM 抽取（每轮回复后，低温度，静默失败）
 │   └── MemoryRetriever.kt     # 关键词相关度 top-k
 ├── safety/
 │   └── DrivingLoadEstimatorV2.kt # 车速/场景只改回复长度和语气，永不静默
@@ -100,5 +100,5 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
   降级到系统 GPS，不会崩溃——首次接 SDK 的真机联调需确认。
 - **云语音未实现**：`CloudTtsProvider` / `CloudAsrProvider` 只是接口，默认链路是
   系统 TTS/ASR；情感语音需后续接厂商并配 AudioTrack 播放。
-- **记忆检索是关键词级**，非语义向量；LLM 抽取 hook 未接线。
+- **记忆检索是关键词级**，非语义向量；LLM 抽取已接线：每轮回复完成后低温度后台抽取，失败静默（规则路径始终兜底）。
 - **流式回复的文字记录在整句完成后才上屏**（说话是实时的）；ASR 中间结果暂不显示。

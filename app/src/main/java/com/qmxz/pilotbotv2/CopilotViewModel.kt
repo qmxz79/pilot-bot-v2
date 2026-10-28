@@ -45,6 +45,8 @@ data class UiStatus(
     val listening: Boolean = false,
     /** False when the health check found no recognition service: mic must not invite a doomed tap. */
     val asrAvailable: Boolean = true,
+    /** Live ASR partial text; empty means nothing to show. */
+    val partial: String = "",
     val speedKmh: Float = 0f,
     val scene: DriveScene = DriveScene.CRUISE,
     val healthSummary: String = "自检中…",
@@ -75,7 +77,7 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { pipeline.interrupt() }
     }
     private val vad = VadDetector()
-    private val pipeline = BargeInVoicePipeline(application, tts, asr, focus, vad)
+    private val pipeline: BargeInVoicePipeline = BargeInVoicePipeline(tts, asr, focus, vad)
     private val llm = LlmClient(settings)
     private val memoryStore = MemoryStore(application)
     private val coordinator = NaviSessionCoordinator(
@@ -100,9 +102,32 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     /** Pipeline error messages already shown this session (spam guard). */
     private val reportedPipelineErrors = HashSet<String>()
 
+    /**
+     * Rolling conversation history (multi-turn context). Without it every
+     * turn was a fresh world — the companion could not follow up on anything
+     * said one sentence earlier. Capped so a 30-minute drive cannot blow up
+     * the prompt; the system prompt (persona + memories + scene) is rebuilt
+     * every turn and never stored here.
+     */
+    private val history = ArrayDeque<ChatMessage>()
+
+    /** The user text of the in-flight turn, until its reply is committed. */
+    private var pendingUserText: String? = null
+
+    /** Reply text accumulated so far for the in-flight turn (interruption-safe). */
+    private val assistantSoFar = StringBuilder()
+
+    /** Fire-and-forget LLM memory extraction (cancelled on interrupt/release). */
+    private var memoryJob: Job? = null
+
     /** Guards late LLM callbacks from a cancelled/interrupted stream. */
     private var activeStreamId: Int = 0
     private var released: Boolean = false
+
+    private companion object {
+        /** ~6 turns of context; keeps the prompt small and latency low. */
+        const val MAX_HISTORY_MESSAGES = 12
+    }
 
     init {
         pipeline.listener = object : VoicePipelineListener {
@@ -120,11 +145,13 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                 updateStatus { copy(speaking = false) }
             }
 
-            // Partials are display-only in v2; the UI shows final results.
-            override fun onPartialResult(text: String) = Unit
+            // Live ASR partials: shown under the transcript while listening.
+            override fun onPartialResult(text: String) {
+                updateStatus { copy(partial = text) }
+            }
 
             override fun onFinalResult(text: String) {
-                updateStatus { copy(listening = false) }
+                updateStatus { copy(listening = false, partial = "") }
                 sendToLlm(text)
             }
 
@@ -146,7 +173,7 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                 // continues) or a TTS error (onSpeakingFinished follows and
                 // clears the flag). Only touch flags when not speaking.
                 if (pipeline.state != PipelineState.SPEAKING) {
-                    updateStatus { copy(speaking = false, listening = false) }
+                    updateStatus { copy(speaking = false, listening = false, partial = "") }
                 }
             }
         }
@@ -169,15 +196,18 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
 
     fun onMicPressed() {
         when (pipeline.state) {
-            PipelineState.LISTENING -> pipeline.stopListening()
+            PipelineState.LISTENING -> {
+                pipeline.stopListening()
+                updateStatus { copy(partial = "") }
+            }
             PipelineState.SPEAKING -> {
                 pipeline.interrupt()
                 pipeline.startListening()
-                updateStatus { copy(listening = true) }
+                updateStatus { copy(listening = true, partial = "") }
             }
             PipelineState.IDLE -> {
                 pipeline.startListening()
-                updateStatus { copy(listening = true) }
+                updateStatus { copy(listening = true, partial = "") }
             }
         }
     }
@@ -188,6 +218,22 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         llmJob?.cancel()
         llmJob = null
         llm.cancelCurrent()
+        memoryJob?.cancel()
+        memoryJob = null
+        // The interrupted turn still happened: keep the user's question and
+        // whatever reply was already heard, so the next turn has context and
+        // the transcript matches reality.
+        val user = pendingUserText
+        if (user != null) {
+            val partial = assistantSoFar.toString().trim()
+            if (partial.isNotEmpty()) {
+                postTranscript(TranscriptItem(TranscriptRole.ASSISTANT, "$partial（被打断）"))
+            }
+            commitTurn(user, partial)
+            pendingUserText = null
+            assistantSoFar.clear()
+        }
+        updateStatus { copy(partial = "") }
         when (pipeline.state) {
             PipelineState.SPEAKING -> pipeline.interrupt()
             PipelineState.LISTENING -> {
@@ -237,7 +283,7 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
 
     private fun sendToLlm(userText: String) {
         if (userText.isBlank()) return
-        // A new turn replaces the old one.
+        // A new turn replaces the old one (also commits its partial reply).
         onInterrupt()
         postTranscript(TranscriptItem(TranscriptRole.USER, userText))
 
@@ -262,17 +308,20 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
             style = style,
             navContext = navContext
         )
+        val chatHistory = history.toList()
         val streamId = ++activeStreamId
+        pendingUserText = userText
+        assistantSoFar.clear()
         llmJob = viewModelScope.launch {
             pipeline.beginStream()
             val splitter = IncrementalSplitter()
             llm.streamChat(
-                messages = listOf(
-                    ChatMessage("system", systemPrompt),
-                    ChatMessage("user", userText)
-                ),
+                messages = listOf(ChatMessage("system", systemPrompt)) +
+                    chatHistory +
+                    ChatMessage("user", userText),
                 onToken = { token ->
                     if (streamId != activeStreamId) return@streamChat
+                    assistantSoFar.append(token)
                     splitter.feed(token).forEach { pipeline.queueSentence(it) }
                 },
                 onDone = { fullText ->
@@ -284,6 +333,10 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                             TranscriptItem(TranscriptRole.ASSISTANT, fullText)
                         )
                     }
+                    commitTurn(userText, fullText)
+                    pendingUserText = null
+                    assistantSoFar.clear()
+                    startLlmMemoryExtraction(userText)
                 },
                 onError = { message ->
                     if (streamId != activeStreamId) return@streamChat
@@ -293,8 +346,58 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                     )
                     // Short spoken apology; the detail stays in the transcript.
                     pipeline.speakText("抱歉，刚才没连上。")
+                    // Keep the question in history so the user can re-ask and
+                    // the companion remembers being asked.
+                    commitTurn(userText, "")
+                    pendingUserText = null
+                    assistantSoFar.clear()
                 }
             )
+        }
+    }
+
+    /** Append a finished turn to the rolling history and cap its size. */
+    private fun commitTurn(userText: String, assistantText: String) {
+        if (userText.isNotBlank()) history.addLast(ChatMessage("user", userText))
+        if (assistantText.isNotBlank()) history.addLast(ChatMessage("assistant", assistantText))
+        while (history.size > MAX_HISTORY_MESSAGES) {
+            history.removeFirst()
+        }
+    }
+
+    /**
+     * Second memory pass: ask the LLM to extract what regex cannot catch.
+     * Fire-and-forget after the reply completes; failures are silent (the
+     * rule path already ran, and a lost memory must never disturb a drive).
+     */
+    private fun startLlmMemoryExtraction(userText: String) {
+        if (settings.apiKey.isBlank() || released) return
+        memoryJob?.cancel()
+        memoryJob = viewModelScope.launch {
+            try {
+                var reply = ""
+                llm.streamChat(
+                    messages = listOf(
+                        ChatMessage("user", MemoryExtractor.extractionPrompt(userText))
+                    ),
+                    temperature = 0.2,
+                    onToken = { },
+                    onDone = { text -> reply = text },
+                    onError = { /* silent by design */ }
+                )
+                // streamChat returns after the stream finished; store on IO.
+                val items = MemoryExtractor.parseLlmResponse(reply)
+                if (items.isEmpty()) return@launch
+                val stored = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    items.filter { memoryStore.add(it) }
+                }
+                if (stored.isNotEmpty()) {
+                    val summary = stored.joinToString("；") { it.text }
+                    postTranscript(TranscriptItem(TranscriptRole.SYSTEM, "已记住：$summary"))
+                }
+            } catch (_: Exception) {
+                // Extraction is best-effort; never let it break a drive.
+            }
         }
     }
 
@@ -344,6 +447,8 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         activeStreamId++
         llmJob?.cancel()
         llmJob = null
+        memoryJob?.cancel()
+        memoryJob = null
         llm.cancelCurrent()
         pipeline.release()
         coordinator.stop()

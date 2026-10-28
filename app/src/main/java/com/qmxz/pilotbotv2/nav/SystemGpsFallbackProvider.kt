@@ -57,6 +57,7 @@ class SystemGpsFallbackProvider(context: Context) : NavigationProvider {
 
         // The remaining callbacks are required by the interface on older APIs;
         // they carry no information this provider needs.
+        @Deprecated("deprecated in the platform API")
         @Suppress("DEPRECATION")
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
         override fun onProviderEnabled(provider: String) = Unit

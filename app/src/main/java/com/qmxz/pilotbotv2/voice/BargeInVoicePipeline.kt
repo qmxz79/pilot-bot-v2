@@ -1,6 +1,5 @@
 package com.qmxz.pilotbotv2.voice
 
-import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.qmxz.pilotbotv2.llm.SentenceSplitter
@@ -69,7 +68,6 @@ enum class PipelineState { IDLE, SPEAKING, LISTENING }
  * Never both at once.
  */
 class BargeInVoicePipeline(
-    context: Context,
     private val tts: TtsProvider,
     private val asr: AsrProvider,
     private val focus: AudioFocusManager,
@@ -215,7 +213,7 @@ class BargeInVoicePipeline(
         val batch = batchId
         val utteranceId = "u${++utteranceSeq}"
         tts.speak(sentence, utteranceId, object : TtsListener {
-            override fun onStart(id: String) {
+            override fun onStart(utteranceId: String) {
                 mainHandler.post {
                     if (batch == batchId && state == PipelineState.SPEAKING) {
                         listener?.onSentenceSpoken(sentence)
@@ -223,13 +221,13 @@ class BargeInVoicePipeline(
                 }
             }
 
-            override fun onDone(id: String) {
+            override fun onDone(utteranceId: String) {
                 mainHandler.post {
                     if (batch == batchId) speakNext()
                 }
             }
 
-            override fun onError(id: String, message: String) {
+            override fun onError(utteranceId: String, message: String) {
                 mainHandler.post {
                     if (batch == batchId) {
                         listener?.onError(message)

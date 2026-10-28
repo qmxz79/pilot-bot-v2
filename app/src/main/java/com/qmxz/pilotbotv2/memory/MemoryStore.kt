@@ -75,7 +75,12 @@ class MemoryStore(context: Context) {
             val current = all()
             val normalized = normalize(item.text)
             if (current.any { normalize(it.text) == normalized }) return false
-            val updated = current + item
+            var updated = current + item
+            // Hard cap: a long drive must not grow the file without bound.
+            // Oldest entries fall off first; retrieval only ever sees top-k.
+            if (updated.size > MAX_ITEMS) {
+                updated = updated.sortedBy { it.createdAt }.takeLast(MAX_ITEMS)
+            }
             return save(updated)
         }
     }
@@ -114,6 +119,9 @@ class MemoryStore(context: Context) {
     }
 
     companion object {
+        /** Storage cap: 200 memories is years of driving; oldest fall off first. */
+        const val MAX_ITEMS = 200
+
         fun newItem(kind: MemoryKind, text: String): MemoryItem {
             return MemoryItem(
                 id = UUID.randomUUID().toString(),
