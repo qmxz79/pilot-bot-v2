@@ -11,7 +11,10 @@ data class NavLocation(
     val lngGcj02: Double,
     val address: String?,
     val speedKmh: Float,
-    /** "高德" or "系统 GPS" — shown in the UI so the driver knows the source. */
+    /**
+     * "高德", "系统 GPS" (GPS fix) or "网络定位" (network fix, coarse) —
+     * shown in the UI so the driver knows the source (and its accuracy).
+     */
     val source: String
 )
 

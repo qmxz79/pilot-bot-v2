@@ -17,9 +17,22 @@ import java.util.Locale
  * configured, or its init fails. Raw GPS output is WGS-84, so every fix is
  * converted to GCJ-02 here — exactly once — before leaving this provider.
  *
+ * Fix filtering (real-device finding 2026-10-28: position off by hundreds
+ * of metres, speed alternating 0 and jumping):
+ * - GPS and network fixes share one listener, but they are NOT equal.
+ *   Network fixes are coarse cell/WiFi estimates and carry no speed, so a
+ *   network fix is accepted only when GPS has gone quiet AND its own
+ *   accuracy is usable; otherwise it would drag a good GPS track sideways
+ *   and zero the speed display mid-drive.
+ * - Speed is carried forward when a fix has none, and lightly smoothed
+ *   (exponential average) when it does, so the display neither drops to
+ *   0 nor jumps several km/h fix to fix.
+ *
  * Geocoding runs on a background thread and is throttled to once per 30 s:
  * Geocoder can do network I/O and must never run on the main thread, where
- * LocationListener callbacks arrive.
+ * LocationListener callbacks arrive. Geocoder expects WGS-84, so the fix
+ * is converted back before lookup (feeding it GCJ-02 shifts the returned
+ * street by the same China offset the forward transform removes).
  */
 class SystemGpsFallbackProvider(context: Context) : NavigationProvider {
 
@@ -36,9 +49,30 @@ class SystemGpsFallbackProvider(context: Context) : NavigationProvider {
     private var lastGeocodeMs: Long = 0
     private var started: Boolean = false
 
+    /** Last time a GPS (not network) fix arrived; 0 means none yet. */
+    private var lastGpsMs: Long = 0
+
+    /** Last accepted speed, carried forward across speed-less fixes. */
+    private var lastSpeedKmh: Float? = null
+
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             // LocationListener callbacks arrive on the main thread.
+            val isGps = location.provider == LocationManager.GPS_PROVIDER
+            val now = System.currentTimeMillis()
+            if (!isGps) {
+                val gpsStale = now - lastGpsMs > GPS_STALE_MS
+                val accuracyOk = !location.hasAccuracy() ||
+                    location.accuracy <= MAX_NETWORK_ACCURACY_M
+                if (!gpsStale || !accuracyOk) {
+                    // A fresh GPS track must never be overwritten by a
+                    // coarse network estimate, and a wildly inaccurate
+                    // network fix is worse than holding the last fix.
+                    return
+                }
+            } else {
+                lastGpsMs = now
+            }
             val (gcjLat, gcjLng) = CoordinateTransform.wgs84ToGcj02(
                 location.latitude,
                 location.longitude
@@ -47,8 +81,8 @@ class SystemGpsFallbackProvider(context: Context) : NavigationProvider {
                 latGcj02 = gcjLat,
                 lngGcj02 = gcjLng,
                 address = lastLocation?.address,
-                speedKmh = location.speed * 3.6f,
-                source = providerName
+                speedKmh = smoothedSpeed(location),
+                source = if (isGps) providerName else "网络定位"
             )
             lastLocation = fix
             onLocation?.invoke(fix)
@@ -120,15 +154,44 @@ class SystemGpsFallbackProvider(context: Context) : NavigationProvider {
 
     override fun latestLocation(): NavLocation? = lastLocation
 
+    /**
+     * Speed with two guards. A fix without speed (typical network fix)
+     * carries the last known speed instead of zeroing the display
+     * mid-drive; a fix with speed is lightly averaged so raw GPS jitter
+     * does not make the display jump several km/h fix to fix.
+     */
+    private fun smoothedSpeed(location: Location): Float {
+        val previous = lastSpeedKmh
+        val next = if (location.hasSpeed()) {
+            val raw = (location.speed * 3.6f).coerceAtLeast(0f)
+            if (previous == null) {
+                raw
+            } else {
+                SPEED_ALPHA * raw + (1 - SPEED_ALPHA) * previous
+            }
+        } else {
+            previous ?: 0f
+        }
+        lastSpeedKmh = next
+        return next
+    }
+
     private fun maybeGeocode(fix: NavLocation) {
         val now = System.currentTimeMillis()
         if (now - lastGeocodeMs < GEOCODE_THROTTLE_MS) return
         lastGeocodeMs = now
         Thread({
             try {
+                // Geocoder expects WGS-84; the fix stores GCJ-02, so
+                // convert back first — feeding GCJ-02 straight in shifts
+                // the returned street by the China offset.
+                val (wgsLat, wgsLng) = CoordinateTransform.gcj02ToWgs84(
+                    fix.latGcj02,
+                    fix.lngGcj02
+                )
                 @Suppress("DEPRECATION")
                 val addresses = Geocoder(appContext, Locale.getDefault())
-                    .getFromLocation(fix.latGcj02, fix.lngGcj02, 1)
+                    .getFromLocation(wgsLat, wgsLng, 1)
                 val address = addresses?.firstOrNull()?.getAddressLine(0)
                 if (!address.isNullOrBlank()) {
                     mainHandler.post {
@@ -147,5 +210,14 @@ class SystemGpsFallbackProvider(context: Context) : NavigationProvider {
 
     private companion object {
         const val GEOCODE_THROTTLE_MS = 30_000L
+
+        /** Network fixes fill in only after GPS has been quiet this long. */
+        const val GPS_STALE_MS = 30_000L
+
+        /** A network fix coarser than this is worse than holding position. */
+        const val MAX_NETWORK_ACCURACY_M = 500f
+
+        /** Weight of the newest speed sample in the exponential average. */
+        const val SPEED_ALPHA = 0.5f
     }
 }
