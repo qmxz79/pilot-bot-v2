@@ -13,7 +13,7 @@ v1 代码量不小（约 8,900 行 Kotlin），但体验上全线失守——半
 | 容易闪退 | 1500 行 god activity + 未编译过的生命周期/TTS/ASR 链路 | MainActivity < 400 行只做组装；逻辑下沉各模块；CrashLog 记录崩溃；所有回调 main 线程化 |
 | 没有声音 | 低速 <15km/h 时 L0 全静默门掐掉播报；TTS 不可用只显示文字 | 取消全静默：任何级别都不闭嘴，只改短句/语气；启动自检 + 界面和语音两路明示降级 |
 | 定位不准、导航失败 | GPS 原生坐标与高德坐标系混用；key/权限/SDK 失败无反馈 | 坐标转换统一在 provider 边界做且仅一次；key/权限/GPS 自检返回人类可读状态；SDK 失败自动降级系统 GPS |
-| 声音机械卡顿 | 系统 TTS + 逐句朗读 + 音频焦点互抢 | 句子级流式队列 + transient 独占音频焦点 + 云端情感 TTS 接口预留（即插即用） |
+| 声音机械卡顿 | 系统 TTS + 逐句朗读 + 音频焦点互抢 | 句子级流式队列 + transient 独占音频焦点 + 讯飞云语音已接入（设置页切换） |
 | 聊天不自然 | 半双工，不能打断 | 说话期间 AudioRecord 轻量 VAD 检测人声 → 打断 TTS → 切 ASR；另有红色打断按钮 |
 | 人设混乱 | 人设只有名字/语气/口头禅几个词 | 固定身份卡（身份、性格、口头禅、禁忌、示例对话），每轮提示词重新锚定 |
 | 记不住你 | 记忆是手动填表 | 对话自动抽记忆（喜欢/讨厌/每周/家住/常走等句式）→ 本地 JSON 存储 → 关键词检索注入提示词 |
@@ -27,10 +27,14 @@ app/src/main/java/com/qmxz/pilotbotv2/
 ├── CopilotViewModel.kt        # 唯一编排者：对话轮次、场景、记忆、自检
 ├── voice/
 │   ├── BargeInVoicePipeline.kt# 核心：句子级 TTS 队列 + VAD 打断 + ASR 切换
-│   ├── TtsProvider.kt / SystemTtsProvider.kt   # 系统 TTS（默认）
-│   ├── CloudTtsProvider.kt    # 云端情感 TTS 接口（未实现，即插即用）
-│   ├── AsrProvider.kt / SystemAsrProvider.kt   # 系统 ASR（默认）
-│   ├── CloudAsrProvider.kt    # 云端流式 ASR 接口（未实现）
+│   ├── TtsProvider.kt / SystemTtsProvider.kt   # 系统 TTS（无 key 时的兜底）
+│   ├── XfyunTtsProvider.kt    # 讯飞云 TTS：WebSocket + 16k PCM 流式 AudioTrack 播放
+│   ├── AsrProvider.kt / SystemAsrProvider.kt   # 系统 ASR（无 key 时的兜底）
+│   ├── XfyunAsrProvider.kt    # 讯飞云 ASR：WebSocket + 16k 麦克风流式听写
+│   ├── XfyunAuth.kt           # 讯飞 HMAC-SHA256 签名 URL（TTS/ASR 共用）
+│   ├── VoiceSettings.kt       # 语音引擎切换 + 讯飞 Key（只存本机）
+│   ├── SwitchableProviders.kt # 每轮解析当前引擎，切换无需重启
+│   ├── CloudTtsProvider.kt / CloudAsrProvider.kt  # 通用云端接口（扩展点，暂未用）
 │   ├── AsrErrorMapper.kt      # 错误码 → 人能看懂的提示
 │   ├── AudioFocusManager.kt   # transient 独占音频焦点
 │   └── VadDetector.kt         # 说话期间的轻量人声检测
@@ -78,7 +82,11 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
    - 在项目根目录 `local.properties` 写 `AMAP_KEY=你的高德Key`（该文件已 gitignore，绝不提交）。
 3. LLM Key（必需，否则对话会明示“未配置”）：装好 App 后点「设置」，填
    OpenAI 兼容地址、Key、模型名（默认 DeepSeek 地址与模型），再选人设。
-4. Sync + Run 到真机。
+4. 讯飞云语音（无谷歌语音服务的手机必需，否则语音不可用）：在讯飞开放平台
+   申请应用，把 AppID、API Key、API Secret 填进「设置」→ 语音引擎选「讯飞
+   云语音」（发音人默认 xiaoyan，可改）。Key 只存本机；不选或未填时自动
+   回落系统语音。切换立即对下一轮对话生效，无需重启 App。
+5. Sync + Run 到真机。
 
 ## 真机验收清单（v2 的硬性门槛，v1 从未做过）
 
@@ -98,7 +106,9 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
 - **高德反射调用未核对实物 SDK**：方法名按公开的高德定位 SDK API 写（含著名的
   `Hight_Accuracy` 拼写），但手头没有 SDK jar；若签名有出入，provider 会优雅
   降级到系统 GPS，不会崩溃——首次接 SDK 的真机联调需确认。
-- **云语音未实现**：`CloudTtsProvider` / `CloudAsrProvider` 只是接口，默认链路是
-  系统 TTS/ASR；情感语音需后续接厂商并配 AudioTrack 播放。
+- **讯飞云语音未经真机验证**：TTS/ASR 的 WebSocket 协议按讯飞官方文档实现，
+  但本机无 Android SDK、无法编译，真机联调需确认：TTS 每句一次握手带来的
+  延迟、ASR 的 pgs 修正与 ls 结束、弱网下的错误提示；无 key 时自动回落系统
+  链路，行为与之前一致。
 - **记忆检索是关键词级**，非语义向量；LLM 抽取已接线：每轮回复完成后低温度后台抽取，失败静默（规则路径始终兜底）。
 - **流式回复的文字记录在整句完成后才上屏**（说话是实时的）；ASR 中间结果暂不显示。

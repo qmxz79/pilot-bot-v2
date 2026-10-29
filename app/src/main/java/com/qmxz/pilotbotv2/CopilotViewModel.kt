@@ -26,10 +26,15 @@ import com.qmxz.pilotbotv2.ui.TranscriptRole
 import com.qmxz.pilotbotv2.voice.AudioFocusManager
 import com.qmxz.pilotbotv2.voice.BargeInVoicePipeline
 import com.qmxz.pilotbotv2.voice.PipelineState
+import com.qmxz.pilotbotv2.voice.SwitchableAsrProvider
+import com.qmxz.pilotbotv2.voice.SwitchableTtsProvider
 import com.qmxz.pilotbotv2.voice.SystemAsrProvider
 import com.qmxz.pilotbotv2.voice.SystemTtsProvider
 import com.qmxz.pilotbotv2.voice.VadDetector
 import com.qmxz.pilotbotv2.voice.VoicePipelineListener
+import com.qmxz.pilotbotv2.voice.VoiceSettings
+import com.qmxz.pilotbotv2.voice.XfyunAsrProvider
+import com.qmxz.pilotbotv2.voice.XfyunTtsProvider
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,9 +74,32 @@ data class UiStatus(
 class CopilotViewModel(application: Application) : AndroidViewModel(application) {
 
     val settings = LlmSettings(application)
+    val voiceSettings = VoiceSettings(application)
 
-    private val tts = SystemTtsProvider(application)
-    private val asr = SystemAsrProvider(application)
+    /**
+     * Voice engines resolve per round through the switchable routers:
+     * the user can flip system/xfyun in Settings and the next round uses
+     * the new engine with no restart; an xfyun choice without credentials
+     * falls back to system voice automatically (see effectiveEngine).
+     * The routers also feed HealthCheck, so the health bar always shows
+     * the engine actually in use.
+     */
+    private val systemTts = SystemTtsProvider(application)
+    private val xfyunTts = XfyunTtsProvider(voiceSettings)
+    private val tts = SwitchableTtsProvider(
+        resolve = {
+            if (voiceSettings.effectiveEngine == "xfyun") xfyunTts else systemTts
+        },
+        all = listOf(systemTts, xfyunTts)
+    )
+    private val systemAsr = SystemAsrProvider(application)
+    private val xfyunAsr = XfyunAsrProvider(voiceSettings)
+    private val asr = SwitchableAsrProvider(
+        resolve = {
+            if (voiceSettings.effectiveEngine == "xfyun") xfyunAsr else systemAsr
+        },
+        all = listOf(systemAsr, xfyunAsr)
+    )
     private val focus = AudioFocusManager(application) {
         // Another app (call, nav) took focus: stop speaking immediately.
         viewModelScope.launch { pipeline.interrupt() }
@@ -268,6 +296,19 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         settings.personaId = personaId
         persona = PersonaPresets.byId(personaId)
         postTranscript(TranscriptItem(TranscriptRole.SYSTEM, "人设已切换。"))
+    }
+
+    /** Called after the Settings dialog saves voice fields. */
+    fun onVoiceSettingsSaved() {
+        val note = when {
+            voiceSettings.effectiveEngine == "xfyun" ->
+                "语音引擎已切换为讯飞云语音，下一轮对话生效。"
+            voiceSettings.engine == "xfyun" ->
+                "讯飞 Key 未填完整，已自动回落系统语音。"
+            else ->
+                "语音引擎已切换为系统语音，下一轮对话生效。"
+        }
+        postTranscript(TranscriptItem(TranscriptRole.SYSTEM, note))
     }
 
     fun refreshHealth() {

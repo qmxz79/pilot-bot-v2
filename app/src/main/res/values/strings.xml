@@ -26,6 +26,13 @@
     <string name="persona_warm">暖心朋友</string>
     <string name="persona_steady">沉稳老哥</string>
     <string name="persona_witty">毒舌损友</string>
+    <string name="voice_engine_label">语音引擎（下一轮对话生效；讯飞 Key 未填时自动回落系统语音）</string>
+    <string name="voice_system">系统语音</string>
+    <string name="voice_xfyun">讯飞云语音</string>
+    <string name="xfyun_app_id_label">讯飞 AppID</string>
+    <string name="xfyun_api_key_label">讯飞 API Key</string>
+    <string name="xfyun_api_secret_label">讯飞 API Secret</string>
+    <string name="xfyun_voice_label">讯飞发音人（默认 xiaoyan）</string>
     <string name="dialog_ok">保存</string>
     <string name="dialog_cancel">取消</string>
 </resources>

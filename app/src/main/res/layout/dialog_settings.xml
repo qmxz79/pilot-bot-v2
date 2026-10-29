@@ -89,6 +89,90 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
+            android:text="@string/voice_engine_label"
+            android:textSize="16sp" />
+
+        <RadioGroup
+            android:id="@+id/rg_voice_engine"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rb_voice_system"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_system"
+                android:textSize="16sp" />
+
+            <RadioButton
+                android:id="@+id/rb_voice_xfyun"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/voice_xfyun"
+                android:textSize="16sp" />
+        </RadioGroup>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/xfyun_app_id_label"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_xfyun_app_id"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/xfyun_api_key_label"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_xfyun_api_key"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textPassword"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/xfyun_api_secret_label"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_xfyun_api_secret"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textPassword"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/xfyun_voice_label"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_xfyun_voice"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:textSize="16sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
             android:text="@string/settings_hint"
             android:textColor="#9E9E9E"
             android:textSize="14sp" />

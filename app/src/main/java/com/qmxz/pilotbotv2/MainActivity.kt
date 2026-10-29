@@ -189,9 +189,26 @@ class MainActivity : AppCompatActivity() {
         val etApiKey = dialogView.findViewById<EditText>(R.id.et_api_key)
         val etModel = dialogView.findViewById<EditText>(R.id.et_model)
         val rgPersona = dialogView.findViewById<RadioGroup>(R.id.rg_persona)
+        val rgVoiceEngine = dialogView.findViewById<RadioGroup>(R.id.rg_voice_engine)
+        val etXfyunAppId = dialogView.findViewById<EditText>(R.id.et_xfyun_app_id)
+        val etXfyunApiKey = dialogView.findViewById<EditText>(R.id.et_xfyun_api_key)
+        val etXfyunApiSecret =
+            dialogView.findViewById<EditText>(R.id.et_xfyun_api_secret)
+        val etXfyunVoice = dialogView.findViewById<EditText>(R.id.et_xfyun_voice)
         etBaseUrl.setText(viewModel.settings.baseUrl)
         etApiKey.setText(viewModel.settings.apiKey)
         etModel.setText(viewModel.settings.model)
+        rgVoiceEngine.check(
+            if (viewModel.voiceSettings.engine == "xfyun") {
+                R.id.rb_voice_xfyun
+            } else {
+                R.id.rb_voice_system
+            }
+        )
+        etXfyunAppId.setText(viewModel.voiceSettings.xfyunAppId)
+        etXfyunApiKey.setText(viewModel.voiceSettings.xfyunApiKey)
+        etXfyunApiSecret.setText(viewModel.voiceSettings.xfyunApiSecret)
+        etXfyunVoice.setText(viewModel.voiceSettings.xfyunVoice)
         rgPersona.check(
             when (viewModel.settings.personaId) {
                 "steady" -> R.id.rb_persona_steady
@@ -212,6 +229,18 @@ class MainActivity : AppCompatActivity() {
                     else -> "warm"
                 }
                 viewModel.updatePersona(personaId)
+                viewModel.voiceSettings.engine =
+                    if (rgVoiceEngine.checkedRadioButtonId == R.id.rb_voice_xfyun) {
+                        "xfyun"
+                    } else {
+                        "system"
+                    }
+                viewModel.voiceSettings.xfyunAppId = etXfyunAppId.text.toString()
+                viewModel.voiceSettings.xfyunApiKey = etXfyunApiKey.text.toString()
+                viewModel.voiceSettings.xfyunApiSecret =
+                    etXfyunApiSecret.text.toString()
+                viewModel.voiceSettings.xfyunVoice = etXfyunVoice.text.toString()
+                viewModel.onVoiceSettingsSaved()
                 viewModel.refreshHealth()
             }
             .setNegativeButton(R.string.dialog_cancel, null)
