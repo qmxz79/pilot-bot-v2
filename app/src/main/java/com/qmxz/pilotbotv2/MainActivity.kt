@@ -176,8 +176,11 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_PERMISSIONS) {
             // Re-run the self-check so the health bar (and voice summary)
-            // immediately reflects the granted/denied state.
+            // immediately reflects the granted/denied state, and restart
+            // location so a freshly granted permission takes effect
+            // without an app restart.
             if (::viewModel.isInitialized) {
+                viewModel.refreshLocation()
                 viewModel.refreshHealth()
             }
         }
@@ -245,6 +248,14 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.dialog_cancel, null)
             .show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-arm auto scene switches (onPause disarmed them).
+        if (::viewModel.isInitialized) {
+            viewModel.onResumed()
+        }
     }
 
     override fun onPause() {

@@ -21,6 +21,7 @@ import com.qmxz.pilotbotv2.persona.PersonaPresets
 import com.qmxz.pilotbotv2.persona.SystemPromptBuilder
 import com.qmxz.pilotbotv2.safety.DriveScene
 import com.qmxz.pilotbotv2.safety.DrivingLoadEstimatorV2
+import com.qmxz.pilotbotv2.safety.SceneAutoDetector
 import com.qmxz.pilotbotv2.ui.TranscriptItem
 import com.qmxz.pilotbotv2.ui.TranscriptRole
 import com.qmxz.pilotbotv2.voice.AudioFocusManager
@@ -36,6 +37,7 @@ import com.qmxz.pilotbotv2.voice.VoiceSettings
 import com.qmxz.pilotbotv2.voice.XfyunAsrProvider
 import com.qmxz.pilotbotv2.voice.XfyunTtsProvider
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -118,6 +120,19 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     private var currentScene: DriveScene = DriveScene.CRUISE
     private var currentSpeedKmh: Float = 0f
 
+    /**
+     * M3 safety auto-trigger. The detector is pure logic; this ViewModel
+     * owns the policy around it: manual scene picks suppress auto-switches
+     * for 30 min, auto-switches only fire when the pipeline is IDLE (never
+     * cutting off a reply) and the app is foregrounded (never talking to
+     * an empty car), and a location older than 60 s counts as unknown
+     * speed rather than a stale number.
+     */
+    private val sceneDetector = SceneAutoDetector()
+    private var manualOverrideUntilMs: Long = 0
+    private var foreground: Boolean = true
+    private var lastLocationMs: Long = 0
+
     private val _transcriptEvents =
         MutableSharedFlow<TranscriptItem>(extraBufferCapacity = 64)
     val transcriptEvents: SharedFlow<TranscriptItem> = _transcriptEvents.asSharedFlow()
@@ -155,6 +170,15 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     private companion object {
         /** ~6 turns of context; keeps the prompt small and latency low. */
         const val MAX_HISTORY_MESSAGES = 12
+
+        /** Manual scene picks suppress auto-switches for this long. */
+        const val MANUAL_OVERRIDE_MS = 30 * 60_000L
+
+        /** Backup auto-scene tick (location updates also evaluate). */
+        const val AUTO_EVAL_INTERVAL_MS = 30_000L
+
+        /** Location older than this counts as unknown speed. */
+        const val SPEED_STALE_MS = 60_000L
     }
 
     init {
@@ -209,7 +233,19 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             coordinator.locationFlow.collect { location ->
                 currentSpeedKmh = location?.speedKmh ?: 0f
+                if (location != null) {
+                    lastLocationMs = System.currentTimeMillis()
+                    evaluateAutoScene()
+                }
                 refreshNavSummary()
+            }
+        }
+        // Periodic backup for time-based rules (night boundary, fatigue)
+        // when location updates stop arriving.
+        viewModelScope.launch {
+            while (true) {
+                delay(AUTO_EVAL_INTERVAL_MS)
+                evaluateAutoScene()
             }
         }
         viewModelScope.launch {
@@ -279,7 +315,15 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onSceneSelected(scene: DriveScene) {
+    /**
+     * Manual scene picks (the chips) set a 30 min auto-suppression window;
+     * auto-detected switches pass [auto] = true and do not.
+     */
+    fun onSceneSelected(scene: DriveScene, auto: Boolean = false) {
+        if (!auto) {
+            manualOverrideUntilMs =
+                System.currentTimeMillis() + MANUAL_OVERRIDE_MS
+        }
         currentScene = scene
         updateStatus { copy(scene = scene) }
         val line = when (scene) {
@@ -315,9 +359,53 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         runHealthCheck()
     }
 
+    /**
+     * Re-run location after a permission result. The coordinator starts
+     * once at launch, so a grant that arrives later otherwise never takes
+     * effect until the app restarts (seen 2026-11-02: health said location
+     * ready while the nav line still said no permission).
+     */
+    fun refreshLocation() {
+        coordinator.stop()
+        coordinator.start()
+    }
+
     /** App backgrounded: stop speech/listening/LLM so nothing talks blindly. */
     fun onPaused() {
+        foreground = false
         onInterrupt()
+    }
+
+    /** App foregrounded again: auto scene switches may fire. */
+    fun onResumed() {
+        foreground = true
+    }
+
+    /**
+     * One auto-scene evaluation. Fires at most one switch, only when the
+     * pipeline is IDLE and the app is foregrounded; otherwise this tick
+     * is skipped and a later one retries (the detector's sustained
+     * durations make a missed tick harmless).
+     */
+    private fun evaluateAutoScene() {
+        if (released || !foreground) return
+        if (pipeline.state != PipelineState.IDLE) return
+        val now = System.currentTimeMillis()
+        val speed = if (now - lastLocationMs > SPEED_STALE_MS) {
+            null
+        } else {
+            currentSpeedKmh
+        }
+        val hour = java.util.Calendar.getInstance()
+            .get(java.util.Calendar.HOUR_OF_DAY)
+        val target = sceneDetector.evaluate(
+            now,
+            hour,
+            speed,
+            currentScene,
+            manualOverrideUntilMs
+        ) ?: return
+        onSceneSelected(target, auto = true)
     }
 
     // -------------------------------------------------------------- internals

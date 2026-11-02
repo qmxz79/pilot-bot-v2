@@ -46,7 +46,8 @@ app/src/main/java/com/qmxz/pilotbotv2/
 │   ├── MemoryExtractor.kt     # 规则抽取（实时）+ LLM 抽取（每轮回复后，低温度，静默失败）
 │   └── MemoryRetriever.kt     # 关键词相关度 top-k
 ├── safety/
-│   └── DrivingLoadEstimatorV2.kt # 车速/场景只改回复长度和语气，永不静默
+│   ├── DrivingLoadEstimatorV2.kt # 车速/场景只改回复长度和语气，永不静默
+│   └── SceneAutoDetector.kt     # M3 安全自动触发：疲劳/深夜/拥堵纯逻辑检测
 ├── nav/
 │   ├── CoordinateTransform.kt # WGS-84 ↔ GCJ-02（防国内 300–500 米偏移）
 │   ├── NavigationProvider.kt  # 定位接口 + NavLocation/NavStatus
@@ -97,6 +98,7 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
 - [ ] 连续 1 小时不闪退：跑满 1 小时行车/模拟，事后查 `crash.log`（应用私有目录）
 - [ ] 导航降级：拔掉高德 Key 或删 AAR，App 自动用系统 GPS 且界面明示来源
 - [ ] 无声排查：关掉系统语音数据/拒录音权限，App 明示降级且文字输入仍可用
+- [ ] 安全自动触发：22 点后开车自动切深夜并开口；慢行 90 秒自动切堵车；连续驾驶 2 小时自动提醒疲劳；手动选场景后 30 分钟内不自动打扰；切后台时不自动开口
 
 ## 已知未验证项（诚实清单，见代码内注释）
 

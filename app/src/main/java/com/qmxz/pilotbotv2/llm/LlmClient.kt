@@ -151,7 +151,14 @@ class LlmClient(
                             ?.optJSONObject("delta")
                             ?.optString("content")
                             .orEmpty()
-                        if (delta.isNotEmpty()) {
+                        // Some providers/relays serialize empty content
+                        // fragments as the literal string "null" (seen
+                        // 2026-11-02: ~19 leading "null"s before the real
+                        // reply). Drop those before any real text arrives;
+                        // a "null" inside the actual reply is genuine model
+                        // output and stays.
+                        val isNullPlaceholder = delta == "null" && full.isEmpty()
+                        if (delta.isNotEmpty() && !isNullPlaceholder) {
                             full.append(delta)
                             val copy = delta
                             mainHandler.post { onToken(copy) }
