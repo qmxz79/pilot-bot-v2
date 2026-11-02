@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var transcriptScroll: ScrollView
     private lateinit var healthText: TextView
     private lateinit var navText: TextView
+    private lateinit var routeText: TextView
     private lateinit var speedText: TextView
     private lateinit var partialText: TextView
     private lateinit var waveform: WaveformView
@@ -65,6 +66,7 @@ class MainActivity : AppCompatActivity() {
 
         healthText = findViewById(R.id.health_text)
         navText = findViewById(R.id.nav_text)
+        routeText = findViewById(R.id.route_text)
         speedText = findViewById(R.id.speed_text)
         partialText = findViewById(R.id.partial_text)
         waveform = findViewById(R.id.waveform)
@@ -80,6 +82,9 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.btn_settings).setOnClickListener {
             showSettingsDialog()
+        }
+        findViewById<Button>(R.id.btn_nav).setOnClickListener {
+            showNavigationDialog()
         }
         findViewById<Button>(R.id.btn_send).setOnClickListener {
             val text = textInput.text.toString().trim()
@@ -132,6 +137,7 @@ class MainActivity : AppCompatActivity() {
             "车速：${status.speedKmh.toInt()} km/h · ${status.scene.displayName}"
         healthText.text = status.healthSummary
         navText.text = status.navSummary
+        routeText.text = status.routeSummary
         // Buttons reflect capability, not just state: on a phone without a
         // recognition service the mic button must not invite a tap that can
         // only fail again, and interrupt is meaningless when nothing plays.
@@ -184,6 +190,32 @@ class MainActivity : AppCompatActivity() {
                 viewModel.refreshHealth()
             }
         }
+    }
+
+    /**
+     * Destination dialog. One field, three actions: start a route to the
+     * typed place, end the active route, or cancel. Kept here (not in a
+     * layout file) because it is a single input, like the text fallback.
+     */
+    private fun showNavigationDialog() {
+        val input = EditText(this).apply {
+            hint = getString(R.string.nav_dialog_hint)
+            textSize = 16f
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.nav_dialog_title)
+            .setView(input)
+            .setPositiveButton(R.string.nav_start) { _, _ ->
+                val destination = input.text.toString().trim()
+                if (destination.isNotEmpty()) {
+                    viewModel.startNavigation(destination)
+                }
+            }
+            .setNeutralButton(R.string.nav_end) { _, _ ->
+                viewModel.stopNavigation()
+            }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .show()
     }
 
     private fun showSettingsDialog() {

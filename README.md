@@ -51,9 +51,12 @@ app/src/main/java/com/qmxz/pilotbotv2/
 ├── nav/
 │   ├── CoordinateTransform.kt # WGS-84 ↔ GCJ-02（防国内 300–500 米偏移）
 │   ├── NavigationProvider.kt  # 定位接口 + NavLocation/NavStatus
-│   ├── AmapNavigationProvider.kt # 高德 SDK（反射隔离，无二进制依赖）
+│   ├── AmapNavigationProvider.kt # 高德定位 SDK（反射隔离，无二进制依赖）
 │   ├── SystemGpsFallbackProvider.kt # LocationManager + Geocoder 兜底
-│   └── NaviSessionCoordinator.kt   # 选路 + 失败切换
+│   ├── NaviSessionCoordinator.kt   # 选路 + 失败切换
+│   ├── RouteProvider.kt       # 算路接口 + RouteStep/PlannedRoute
+│   ├── AmapRouteProvider.kt   # 高德算路/地理编码（反射隔离，无二进制依赖）
+│   └── NavigationSession.kt   # 导航会话：里程推进步骤、到点播报指令
 ├── llm/
 │   ├── LlmClient.kt           # OpenAI 兼容、OkHttp SSE 流式
 │   ├── LlmSettings.kt         # SharedPreferences（Key 只存本机）
@@ -99,6 +102,7 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
 - [ ] 导航降级：拔掉高德 Key 或删 AAR，App 自动用系统 GPS 且界面明示来源
 - [ ] 无声排查：关掉系统语音数据/拒录音权限，App 明示降级且文字输入仍可用
 - [ ] 安全自动触发：22 点后开车自动切深夜并开口；慢行 90 秒自动切堵车；连续驾驶 2 小时自动提醒疲劳；手动选场景后 30 分钟内不自动打扰；切后台时不自动开口
+- [ ] 导航：点「导航」输入目的地，算路成功并逐条播报；到点切换步骤，到达提示；无 SDK/Key 时明示不可用、不崩溃
 
 ## 已知未验证项（诚实清单，见代码内注释）
 
@@ -108,6 +112,10 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
 - **高德反射调用未核对实物 SDK**：方法名按公开的高德定位 SDK API 写（含著名的
   `Hight_Accuracy` 拼写），但手头没有 SDK jar；若签名有出入，provider 会优雅
   降级到系统 GPS，不会崩溃——首次接 SDK 的真机联调需确认。
+- **高德算路/地理编码反射签名未核对实物 SDK**：RouteSearch / GeocodeSearch 的
+  类名与方法名按公开 API 写，失败时明示原因、不崩溃；首次联调需确认。
+  步骤推进用行驶里程而非地图匹配，复杂立交/平行路可能早报或晚报，路线行
+  会实时显示下一步以便核对。
 - **讯飞云语音未经真机验证**：TTS/ASR 的 WebSocket 协议按讯飞官方文档实现，
   但本机无 Android SDK、无法编译，真机联调需确认：TTS 每句一次握手带来的
   延迟、ASR 的 pgs 修正与 ls 结束、弱网下的错误提示；无 key 时自动回落系统

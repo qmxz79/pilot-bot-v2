@@ -14,7 +14,12 @@ import com.qmxz.pilotbotv2.memory.MemoryExtractor
 import com.qmxz.pilotbotv2.memory.MemoryRetriever
 import com.qmxz.pilotbotv2.memory.MemoryStore
 import com.qmxz.pilotbotv2.nav.AmapNavigationProvider
+import com.qmxz.pilotbotv2.nav.AmapRouteProvider
+import com.qmxz.pilotbotv2.nav.GeocodeResult
+import com.qmxz.pilotbotv2.nav.NavigationSession
 import com.qmxz.pilotbotv2.nav.NaviSessionCoordinator
+import com.qmxz.pilotbotv2.nav.RouteProvider
+import com.qmxz.pilotbotv2.nav.RouteResult
 import com.qmxz.pilotbotv2.nav.SystemGpsFallbackProvider
 import com.qmxz.pilotbotv2.persona.PersonaCard
 import com.qmxz.pilotbotv2.persona.PersonaPresets
@@ -57,7 +62,8 @@ data class UiStatus(
     val speedKmh: Float = 0f,
     val scene: DriveScene = DriveScene.CRUISE,
     val healthSummary: String = "自检中…",
-    val navSummary: String = "定位：初始化中…"
+    val navSummary: String = "定位：初始化中…",
+    val routeSummary: String = "导航未启动"
 )
 
 /**
@@ -132,6 +138,16 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     private var manualOverrideUntilMs: Long = 0
     private var foreground: Boolean = true
     private var lastLocationMs: Long = 0
+
+    /**
+     * M3 navigation. The route provider is reflection-isolated (same
+     * pattern as the location providers): without the Amap Search SDK
+     * or key, startNavigation fails with a readable message instead of
+     * crashing. The session turns location fixes into spoken maneuver
+     * announcements; navigation outranks chat (see NavigationSession).
+     */
+    private val routeProvider: RouteProvider = AmapRouteProvider(application)
+    private val navSession = NavigationSession()
 
     private val _transcriptEvents =
         MutableSharedFlow<TranscriptItem>(extraBufferCapacity = 64)
@@ -229,12 +245,20 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
+        navSession.onAnnouncement = { text ->
+            postTranscript(TranscriptItem(TranscriptRole.SYSTEM, "导航：$text"))
+            pipeline.speakText(text)
+        }
+        navSession.onRouteUpdate = { summary ->
+            updateStatus { copy(routeSummary = summary) }
+        }
         coordinator.start()
         viewModelScope.launch {
             coordinator.locationFlow.collect { location ->
                 currentSpeedKmh = location?.speedKmh ?: 0f
                 if (location != null) {
                     lastLocationMs = System.currentTimeMillis()
+                    navSession.onLocation(location)
                     evaluateAutoScene()
                 }
                 refreshNavSummary()
@@ -368,6 +392,61 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     fun refreshLocation() {
         coordinator.stop()
         coordinator.start()
+    }
+
+    /** Plan a route to [destination] from the current fix and start guidance. */
+    fun startNavigation(destination: String) {
+        val name = destination.trim()
+        if (name.isEmpty()) return
+        val origin = coordinator.latestLocation()
+        if (origin == null) {
+            postTranscript(
+                TranscriptItem(
+                    TranscriptRole.SYSTEM,
+                    "导航失败：还没有定位，等定位就绪再试。"
+                )
+            )
+            return
+        }
+        postTranscript(
+            TranscriptItem(TranscriptRole.SYSTEM, "正在规划去“$name”的路线…")
+        )
+        routeProvider.geocode(name, null) { geo ->
+            when (geo) {
+                is GeocodeResult.Failed -> postTranscript(
+                    TranscriptItem(TranscriptRole.SYSTEM, "导航失败：${geo.message}")
+                )
+                is GeocodeResult.Ok -> {
+                    routeProvider.planRoute(
+                        origin.latGcj02,
+                        origin.lngGcj02,
+                        geo.latGcj02,
+                        geo.lngGcj02,
+                        name
+                    ) { result ->
+                        when (result) {
+                            is RouteResult.Failed -> postTranscript(
+                                TranscriptItem(
+                                    TranscriptRole.SYSTEM,
+                                    "导航失败：${result.message}"
+                                )
+                            )
+                            is RouteResult.Ok -> navSession.start(result.route)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopNavigation() {
+        if (!navSession.isActive()) {
+            postTranscript(
+                TranscriptItem(TranscriptRole.SYSTEM, "当前没有进行中的导航。")
+            )
+            return
+        }
+        navSession.stop()
     }
 
     /** App backgrounded: stop speech/listening/LLM so nothing talks blindly. */

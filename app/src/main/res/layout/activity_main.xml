@@ -24,6 +24,15 @@
         android:textColor="#9E9E9E"
         android:textSize="14sp" />
 
+    <TextView
+        android:id="@+id/route_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/nav_not_started"
+        android:textColor="#9E9E9E"
+        android:textSize="14sp" />
+
     <ScrollView
         android:id="@+id/transcript_scroll"
         android:layout_width="match_parent"
@@ -133,6 +142,20 @@
             android:layout_weight="1"
             android:text="@string/settings"
             android:textSize="18sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_nav"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="@string/nav_button"
+            android:textSize="16sp" />
     </LinearLayout>
 
     <!-- Text fallback: when ASR is unavailable the app must still be usable. -->
