@@ -149,6 +149,11 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     private val routeProvider: RouteProvider = AmapRouteProvider(application)
     private val navSession = NavigationSession()
 
+    /** Last planned destination, kept so an off-route re-plan needs no new geocode. */
+    private var navDestinationName: String? = null
+    private var navDestinationLatGcj02: Double? = null
+    private var navDestinationLngGcj02: Double? = null
+
     private val _transcriptEvents =
         MutableSharedFlow<TranscriptItem>(extraBufferCapacity = 64)
     val transcriptEvents: SharedFlow<TranscriptItem> = _transcriptEvents.asSharedFlow()
@@ -251,6 +256,9 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         }
         navSession.onRouteUpdate = { summary ->
             updateStatus { copy(routeSummary = summary) }
+        }
+        navSession.onOffRoute = {
+            replanNavigation()
         }
         coordinator.start()
         viewModelScope.launch {
@@ -417,6 +425,9 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                     TranscriptItem(TranscriptRole.SYSTEM, "导航失败：${geo.message}")
                 )
                 is GeocodeResult.Ok -> {
+                    navDestinationName = name
+                    navDestinationLatGcj02 = geo.latGcj02
+                    navDestinationLngGcj02 = geo.lngGcj02
                     routeProvider.planRoute(
                         origin.latGcj02,
                         origin.lngGcj02,
@@ -447,6 +458,54 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         navSession.stop()
+        navDestinationName = null
+        navDestinationLatGcj02 = null
+        navDestinationLngGcj02 = null
+    }
+
+    /**
+     * Off-route recovery. Re-plans from the current fix to the stored
+     * destination (no new geocode: the destination has not moved). On
+     * success the session restarts with the new route and announces the
+     * re-plan; on failure the old route keeps guiding and the session's
+     * 60-second cooldown bounds the next attempt, so a dead network
+     * cannot spam the driver.
+     */
+    private fun replanNavigation() {
+        val name = navDestinationName
+        val destLat = navDestinationLatGcj02
+        val destLng = navDestinationLngGcj02
+        val origin = coordinator.latestLocation()
+        if (name == null || destLat == null || destLng == null || origin == null) {
+            return
+        }
+        postTranscript(
+            TranscriptItem(TranscriptRole.SYSTEM, "已偏离路线，正在重新规划…")
+        )
+        routeProvider.planRoute(
+            origin.latGcj02,
+            origin.lngGcj02,
+            destLat,
+            destLng,
+            name
+        ) { result ->
+            when (result) {
+                is RouteResult.Failed -> postTranscript(
+                    TranscriptItem(
+                        TranscriptRole.SYSTEM,
+                        "重新规划失败：${result.message}，仍按原路线指引。"
+                    )
+                )
+                is RouteResult.Ok -> {
+                    // The driver may have ended navigation while the
+                    // re-plan was in flight; never restart it behind
+                    // their back.
+                    if (navSession.isActive()) {
+                        navSession.start(result.route, isReplan = true)
+                    }
+                }
+            }
+        }
     }
 
     /** App backgrounded: stop speech/listening/LLM so nothing talks blindly. */

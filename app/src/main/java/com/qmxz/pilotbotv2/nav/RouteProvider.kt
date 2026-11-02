@@ -7,7 +7,14 @@ data class RouteStep(
     /** Length of this step, in metres. */
     val distanceMeters: Float,
     /** Road this step runs on, when the provider knows it. */
-    val roadName: String? = null
+    val roadName: String? = null,
+    /**
+     * Shape of this step as GCJ-02 (lat, lng) points, when the provider
+     * knows it. NavigationSession uses it for off-route detection; an
+     * empty list means that step cannot be checked (detection is skipped
+     * for it, never failed).
+     */
+    val polyline: List<Pair<Double, Double>> = emptyList()
 )
 
 /** A planned driving route. Durations in seconds, distances in metres. */

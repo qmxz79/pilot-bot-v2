@@ -41,23 +41,46 @@ class NavigationSession {
     /** Route summary line for the UI. */
     var onRouteUpdate: ((String) -> Unit)? = null
 
+    /**
+     * Fired when the driver has left the route (see [checkOffRoute]).
+     * The argument is the destination name; the owner re-plans from the
+     * current fix and calls [start] with the new route. The session keeps
+     * the old route running until that happens, so a failed re-plan never
+     * leaves the driver without any guidance.
+     */
+    var onOffRoute: ((String) -> Unit)? = null
+
     private var route: PlannedRoute? = null
     private var stepIndex = 0
     private var distanceIntoStep = 0f
     private var lastFix: NavLocation? = null
+    private var offRouteFixCount = 0
+    private var lastOffRouteTriggerMs: Long = 0
 
     fun isActive(): Boolean = route != null
 
-    fun start(route: PlannedRoute) {
+    fun start(route: PlannedRoute, isReplan: Boolean = false) {
         this.route = route
         stepIndex = 0
         distanceIntoStep = 0f
         lastFix = null
+        offRouteFixCount = 0
+        if (isReplan) {
+            // A re-plan is not a fresh trip: suppress off-route detection
+            // briefly so a still-settling GPS fix cannot trigger another
+            // re-plan immediately.
+            lastOffRouteTriggerMs = System.currentTimeMillis()
+        }
         val km = route.totalDistanceMeters / 1000f
         val minutes = route.totalDurationSeconds / 60
         val first = route.steps.firstOrNull()?.instruction
         val overview = buildString {
-            append("开始导航，前往${route.destinationName}，")
+            if (isReplan) {
+                append("已重新规划路线，")
+            } else {
+                append("开始导航，")
+            }
+            append("前往${route.destinationName}，")
             append("全程约${String.format(Locale.US, "%.1f", km)}公里，")
             append("大约${minutes}分钟。")
             if (first != null) {
@@ -73,6 +96,7 @@ class NavigationSession {
         stepIndex = 0
         distanceIntoStep = 0f
         lastFix = null
+        offRouteFixCount = 0
         pushUpdate()
     }
 
@@ -88,6 +112,7 @@ class NavigationSession {
                 distanceIntoStep += travelled
             }
         }
+        checkOffRoute(fix)
         val steps = current.steps
         while (stepIndex < steps.size &&
             distanceIntoStep >= steps[stepIndex].distanceMeters.coerceAtLeast(0f)
@@ -103,6 +128,85 @@ class NavigationSession {
             announce(steps[stepIndex].instruction)
         }
         pushUpdate()
+    }
+
+    /**
+     * Off-route detection, deliberately conservative: GPS in a city can
+     * sit 50 m off, so one far fix proves nothing. Only a moving fix
+     * (speed >= 5 km/h, same standstill guard as step advancement) more
+     * than [OFF_ROUTE_THRESHOLD_M] from the current step's shape, three
+     * fixes in a row, counts as leaving the route. Steps without a
+     * polyline are skipped, not failed. After a trigger, detection pauses
+     * for [OFF_ROUTE_COOLDOWN_MS] so a bad-GPS stretch cannot spam
+     * re-plans; the old route keeps guiding meanwhile.
+     */
+    private fun checkOffRoute(fix: NavLocation) {
+        val current = route ?: return
+        if (fix.speedKmh < 5f) return
+        if (System.currentTimeMillis() - lastOffRouteTriggerMs < OFF_ROUTE_COOLDOWN_MS) {
+            return
+        }
+        val shape = current.steps.getOrNull(stepIndex)?.polyline
+        if (shape.isNullOrEmpty()) {
+            offRouteFixCount = 0
+            return
+        }
+        val distance = distanceToPolylineMeters(fix.latGcj02, fix.lngGcj02, shape)
+        if (distance > OFF_ROUTE_THRESHOLD_M) {
+            offRouteFixCount++
+            if (offRouteFixCount >= OFF_ROUTE_FIXES) {
+                offRouteFixCount = 0
+                lastOffRouteTriggerMs = System.currentTimeMillis()
+                onOffRoute?.invoke(current.destinationName)
+            }
+        } else {
+            offRouteFixCount = 0
+        }
+    }
+
+    /**
+     * Shortest distance from a point to a polyline, in metres.
+     * Equirectangular projection around the point is accurate enough for
+     * the ~100 m threshold over short segments.
+     */
+    private fun distanceToPolylineMeters(
+        lat: Double,
+        lng: Double,
+        shape: List<Pair<Double, Double>>
+    ): Float {
+        if (shape.size == 1) {
+            return haversineMeters(lat, lng, shape[0].first, shape[0].second)
+        }
+        val cosLat = cos(Math.toRadians(lat))
+        val px = lng * cosLat
+        val py = lat
+        var best = Float.MAX_VALUE
+        for (i in 0 until shape.size - 1) {
+            val (latA, lngA) = shape[i]
+            val (latB, lngB) = shape[i + 1]
+            val ax = lngA * cosLat
+            val ay = latA
+            val bx = lngB * cosLat
+            val by = latB
+            val dx = bx - ax
+            val dy = by - ay
+            val lengthSquared = dx * dx + dy * dy
+            val t = if (lengthSquared == 0.0) {
+                0.0
+            } else {
+                ((px - ax) * dx + (py - ay) * dy) / lengthSquared
+            }.coerceIn(0.0, 1.0)
+            val cx = ax + t * dx
+            val cy = ay + t * dy
+            val distDegrees = sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy))
+            // One degree of latitude is ~111,320 m; longitude degrees were
+            // already scaled by cos(lat) above, so the same factor applies.
+            val distMeters = (distDegrees * 111320.0).toFloat()
+            if (distMeters < best) {
+                best = distMeters
+            }
+        }
+        return best
     }
 
     fun summary(): String {
@@ -140,5 +244,16 @@ class NavigationSession {
             sin(dLng / 2) * sin(dLng / 2)
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return (earthRadius * c).toFloat()
+    }
+
+    companion object {
+        /** Beyond this distance from the step shape, a fix counts as off-route. */
+        private const val OFF_ROUTE_THRESHOLD_M = 100f
+
+        /** Consecutive off-route fixes required before triggering a re-plan. */
+        private const val OFF_ROUTE_FIXES = 3
+
+        /** Quiet period after a trigger, so bad GPS cannot spam re-plans. */
+        private const val OFF_ROUTE_COOLDOWN_MS = 60_000L
     }
 }

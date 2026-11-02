@@ -226,7 +226,30 @@ class AmapRouteProvider(context: Context) : RouteProvider {
                     } catch (_: Exception) {
                         null
                     }
-                    RouteStep(instruction, stepDistance, road)
+                    // Step shape for off-route detection. Guarded per
+                    // step: if the SDK build has no getPolyline (or its
+                    // shape differs), that step just skips detection.
+                    val shape = try {
+                        val rawPoints = step.javaClass
+                            .getMethod("getPolyline")
+                            .invoke(step) as? List<*> ?: emptyList<Any>()
+                        rawPoints.mapNotNull { point ->
+                            try {
+                                val pLat = (point.javaClass
+                                    .getMethod("getLatitude")
+                                    .invoke(point) as Number).toDouble()
+                                val pLng = (point.javaClass
+                                    .getMethod("getLongitude")
+                                    .invoke(point) as Number).toDouble()
+                                pLat to pLng
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                    RouteStep(instruction, stepDistance, road, shape)
                 } catch (_: Exception) {
                     null
                 }
