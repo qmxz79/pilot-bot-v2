@@ -119,6 +119,11 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
 - **本地已可编译（2026-11-03 起）**：本机已建 Android SDK 环境，用
   `~/workspace/android-build.sh` 可编出 debug APK（首编已通过）；但每次改动
   仍需本地编一次确认，且 App 内行为仍需真机验证。
+- **调试签名已固定（2026-11-03）**：默认 debug 钥匙在 user.home
+  下的 .android 里，本机解析到 /root，虚拟机一换就丢，导致每次重编
+  签名都变、无法覆盖安装。现固定用项目根目录的 debug.keystore
+  （本机专用，已 gitignore、绝不提交）；别的机器上没这个文件时仍走
+  AGP 默认 debug 签名，不受影响。
 - **未真机**：VAD 阈值（2800）、去抖（250ms）、TTS/ASR 行为、权限流程都需真机调。
 - **高德反射调用未核对实物 SDK**：方法名按公开的高德定位 SDK API 写（含著名的
   `Hight_Accuracy` 拼写），但手头没有 SDK jar；若签名有出入，provider 会优雅

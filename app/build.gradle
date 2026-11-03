@@ -33,6 +33,26 @@ android {
         buildConfig true
     }
 
+    // Pinned debug keystore (2026-11-03): the default debug key lives
+    // under user.home/.android, which on this VM resolves to /root — wiped
+    // on every VM replacement, so each rebuild got a new signature and
+    // could not update over the previous install (reported 2026-11-03).
+    // This project-local copy is persisted with the workspace and is used
+    // whenever present; on any other machine (no such file) the AGP
+    // default debug key applies untouched. The file itself is gitignored
+    // (*.keystore) and must never be pushed.
+    signingConfigs {
+        debug {
+            def pinned = rootProject.file("debug.keystore")
+            if (pinned.exists()) {
+                storeFile pinned
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
