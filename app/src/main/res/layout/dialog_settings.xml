@@ -176,5 +176,15 @@
             android:text="@string/settings_hint"
             android:textColor="#9E9E9E"
             android:textSize="14sp" />
+
+        <!-- Diagnostics: crash.log lives in private files; this button is
+             the only way to see it on-device (no auto-upload ever). -->
+        <Button
+            android:id="@+id/btn_crash_log"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="16dp"
+            android:text="@string/crash_log_button"
+            android:textSize="16sp" />
     </LinearLayout>
 </ScrollView>

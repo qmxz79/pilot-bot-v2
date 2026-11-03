@@ -15,6 +15,7 @@ import android.widget.LinearLayout
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -247,6 +248,49 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Crash-log viewer. The log file is private to the app and nothing
+     * uploads automatically: sharing only happens when the driver taps
+     * 分享, and 清空 deletes the file (a later crash starts a fresh one).
+     */
+    private fun showCrashLogDialog() {
+        val logText = TextView(this).apply {
+            text = CrashLog.readRecent(this@MainActivity)
+            textSize = 13f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(32, 32, 32, 32)
+        }
+        val scroll = ScrollView(this).apply {
+            addView(logText)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.crash_log_title)
+            .setView(scroll)
+            .setPositiveButton(R.string.crash_log_share) { _, _ ->
+                val share = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(
+                        Intent.EXTRA_SUBJECT,
+                        getString(R.string.crash_log_share_subject)
+                    )
+                    putExtra(Intent.EXTRA_TEXT, logText.text.toString())
+                }
+                startActivity(
+                    Intent.createChooser(share, getString(R.string.crash_log_share))
+                )
+            }
+            .setNeutralButton(R.string.crash_log_clear) { _, _ ->
+                CrashLog.clear(this)
+                Toast.makeText(
+                    this,
+                    R.string.crash_log_cleared,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            .setNegativeButton(R.string.crash_log_close, null)
+            .show()
+    }
+
     private fun showSettingsDialog() {
         val dialogView = layoutInflater.inflate(R.layout.dialog_settings, null)
         val etBaseUrl = dialogView.findViewById<EditText>(R.id.et_base_url)
@@ -273,6 +317,11 @@ class MainActivity : AppCompatActivity() {
         etXfyunApiKey.setText(viewModel.voiceSettings.xfyunApiKey)
         etXfyunApiSecret.setText(viewModel.voiceSettings.xfyunApiSecret)
         etXfyunVoice.setText(viewModel.voiceSettings.xfyunVoice)
+        // Diagnostics entry: opens the viewer without saving or closing
+        // the settings form, so unsaved edits are not lost.
+        dialogView.findViewById<Button>(R.id.btn_crash_log).setOnClickListener {
+            showCrashLogDialog()
+        }
         rgPersona.check(
             when (viewModel.settings.personaId) {
                 "steady" -> R.id.rb_persona_steady

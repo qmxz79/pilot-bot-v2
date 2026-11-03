@@ -45,4 +45,11 @@
     <string name="companion_notification_title">副驾搭子正在陪伴</string>
     <string name="companion_notification_text">高德导航进行中，语音陪伴保持在线</string>
     <string name="companion_notification_stop">结束陪伴</string>
+    <string name="crash_log_button">查看崩溃日志</string>
+    <string name="crash_log_title">崩溃日志</string>
+    <string name="crash_log_share">分享</string>
+    <string name="crash_log_clear">清空</string>
+    <string name="crash_log_close">关闭</string>
+    <string name="crash_log_share_subject">副驾搭子崩溃日志</string>
+    <string name="crash_log_cleared">已清空</string>
 </resources>
