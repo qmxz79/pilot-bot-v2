@@ -55,6 +55,12 @@ enum class PipelineState { IDLE, SPEAKING, LISTENING }
  *    button covers deliberate cut-ins with zero loss.)
  * 3. Fail-loud everywhere: TTS/ASR/VAD failures surface as messages, never as
  *    a companion that silently stops talking.
+ * 4. Focus yield: while speaking or listening the pipeline holds transient
+ *    audio focus. When another app (Amap navigation voice) takes transient
+ *    focus, speech pauses at once — the interrupted sentence is replayed
+ *    from the start when focus returns — VAD stops so nav words are never
+ *    mistaken for the user, and a cut listening turn restarts hands-free.
+ *    Permanent focus loss stops everything with no auto-resume.
  *
  * Threading: every public method is expected on the main thread, and every
  * callback is re-posted to the main thread. TTS callbacks arrive on binder
@@ -94,6 +100,15 @@ class BargeInVoicePipeline(
     /** VAD failure is reported once per pipeline lifetime (see beginSpeaking). */
     private var vadFailureNoted: Boolean = false
 
+    /** Sentence currently being spoken (already removed from [queue]). */
+    private var currentSentence: String? = null
+
+    /** Speech paused by a transient focus yield; resumed by [resumeFromYield]. */
+    private var yielded: Boolean = false
+
+    /** Listening suspended by a transient focus yield; restarted by [resumeFromYield]. */
+    private var yieldedListening: Boolean = false
+
     private var released: Boolean = false
 
     // ------------------------------------------------------------------ speech
@@ -121,6 +136,9 @@ class BargeInVoicePipeline(
         queue.clear()
         streaming = false
         waitingForSentences = false
+        yielded = false
+        yieldedListening = false
+        currentSentence = null
         if (sentences.isEmpty()) {
             state = PipelineState.IDLE
             listener?.onSpeakingFinished()
@@ -180,6 +198,12 @@ class BargeInVoicePipeline(
     private fun beginSpeaking() {
         state = PipelineState.SPEAKING
         focus.request()
+        startVad()
+        listener?.onSpeakingStarted()
+    }
+
+    /** VAD arming shared by [beginSpeaking] and [resumeFromYield]. */
+    private fun startVad() {
         vad.start(
             onVoice = { mainHandler.post { handleVadTrigger() } },
             onAmplitude = { /* reserved for a future mic meter */ },
@@ -195,11 +219,10 @@ class BargeInVoicePipeline(
                 }
             }
         )
-        listener?.onSpeakingStarted()
     }
 
     private fun speakNext() {
-        if (released || state != PipelineState.SPEAKING) return
+        if (released || state != PipelineState.SPEAKING || yielded) return
         if (queue.isEmpty()) {
             if (streaming) {
                 waitingForSentences = true
@@ -210,6 +233,7 @@ class BargeInVoicePipeline(
         }
         waitingForSentences = false
         val sentence = queue.removeFirst()
+        currentSentence = sentence
         val batch = batchId
         val utteranceId = "u${++utteranceSeq}"
         tts.speak(sentence, utteranceId, object : TtsListener {
@@ -243,6 +267,9 @@ class BargeInVoicePipeline(
         state = PipelineState.IDLE
         waitingForSentences = false
         streaming = false
+        yielded = false
+        yieldedListening = false
+        currentSentence = null
         vad.stop()
         focus.abandon()
         listener?.onSpeakingFinished()
@@ -256,6 +283,9 @@ class BargeInVoicePipeline(
         queue.clear()
         streaming = false
         waitingForSentences = false
+        yielded = false
+        yieldedListening = false
+        currentSentence = null
         try {
             tts.stop()
         } catch (_: Exception) {
@@ -266,8 +296,76 @@ class BargeInVoicePipeline(
         listener?.onInterrupted()
     }
 
+    // ------------------------------------------------------------ focus yield
+
+    /**
+     * Another app took transient focus (a nav announcement, a call waiting):
+     * pause at once, resume on [resumeFromYield]. Silent by design — a
+     * 3-second nav prompt must not spam the transcript or a toast.
+     *
+     * SPEAKING: the in-flight sentence is re-queued at the front, so it is
+     * replayed from the start on resume, never cut in half. VAD stops too:
+     * without that, the nav voice itself would trip barge-in and the
+     * companion would try to answer its own navigation. Focus is NOT
+     * abandoned — the request stays registered, so the system delivers
+     * AUDIOFOCUS_GAIN when the other app releases.
+     *
+     * LISTENING: the ASR session stops (late callbacks are ignored: they
+     * check state == LISTENING). [resumeFromYield] restarts listening so
+     * the driver does not have to re-tap; the partial transcript is lost,
+     * so the command is repeated in full.
+     */
+    fun yieldForFocus() {
+        if (released || yielded || yieldedListening) return
+        when (state) {
+            PipelineState.SPEAKING -> {
+                yielded = true
+                batchId++ // invalidate late TTS callbacks from the stopped utterance
+                val interrupted = currentSentence
+                currentSentence = null
+                if (interrupted != null) queue.addFirst(interrupted)
+                try {
+                    tts.stop()
+                } catch (_: Exception) {
+                }
+                vad.stop()
+            }
+            PipelineState.LISTENING -> {
+                yieldedListening = true
+                try {
+                    asr.stopListening()
+                } catch (_: Exception) {
+                }
+                // Focus is NOT abandoned here either: the request must stay
+                // registered or the system will never deliver the GAIN that
+                // triggers the listening restart in resumeFromYield().
+                state = PipelineState.IDLE
+            }
+            PipelineState.IDLE -> Unit
+        }
+    }
+
+    /**
+     * Focus returned after a yield: continue where we paused. No-op without
+     * a prior yield, and flags are always cleared so a stale yield can never
+     * block later speech.
+     */
+    fun resumeFromYield() {
+        if (released) return
+        val wasYielded = yielded
+        val wasYieldedListening = yieldedListening
+        yielded = false
+        yieldedListening = false
+        if (wasYielded && state == PipelineState.SPEAKING) {
+            startVad()
+            speakNext()
+        } else if (wasYieldedListening) {
+            startListening()
+        }
+    }
+
     private fun handleVadTrigger() {
-        if (released || state != PipelineState.SPEAKING) return
+        if (released || state != PipelineState.SPEAKING || yielded) return
         // User started talking over the companion: stop speech, then listen.
         // interrupt() notifies onInterrupted; startListening() follows immediately.
         interrupt()
@@ -284,6 +382,11 @@ class BargeInVoicePipeline(
         }
         if (state == PipelineState.LISTENING) return
         state = PipelineState.LISTENING
+        // Hold focus while listening too: without it the system never
+        // delivers the transient-loss callback, so a nav announcement
+        // during listening could not pause ASR (see yieldForFocus).
+        // Music ducks while the driver talks to the companion, then resumes.
+        focus.request()
         asr.startListening(object : AsrListener {
             override fun onPartial(text: String) {
                 mainHandler.post {
@@ -297,6 +400,7 @@ class BargeInVoicePipeline(
                 mainHandler.post {
                     if (state == PipelineState.LISTENING) {
                         state = PipelineState.IDLE
+                        focus.abandon()
                         listener?.onFinalResult(text)
                     }
                 }
@@ -306,6 +410,7 @@ class BargeInVoicePipeline(
                 mainHandler.post {
                     if (state == PipelineState.LISTENING) {
                         state = PipelineState.IDLE
+                        focus.abandon()
                         listener?.onError(message)
                     }
                 }
@@ -319,6 +424,7 @@ class BargeInVoicePipeline(
             asr.stopListening()
         } catch (_: Exception) {
         }
+        focus.abandon()
         state = PipelineState.IDLE
     }
 
@@ -342,6 +448,9 @@ class BargeInVoicePipeline(
         queue.clear()
         streaming = false
         waitingForSentences = false
+        yielded = false
+        yieldedListening = false
+        currentSentence = null
         try {
             tts.stop()
         } catch (_: Exception) {

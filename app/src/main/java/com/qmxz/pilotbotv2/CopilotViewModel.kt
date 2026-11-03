@@ -108,10 +108,22 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         },
         all = listOf(systemAsr, xfyunAsr)
     )
-    private val focus = AudioFocusManager(application) {
-        // Another app (call, nav) took focus: stop speaking immediately.
-        viewModelScope.launch { pipeline.interrupt() }
-    }
+    private val focus = AudioFocusManager(
+        application,
+        onFocusLost = {
+            // Permanent loss (a call took over, music started): stop
+            // speaking and do not auto-resume.
+            viewModelScope.launch { pipeline.interrupt() }
+        },
+        onYield = {
+            // Transient loss (a nav announcement): pause at once; the
+            // pipeline replays the cut sentence when focus returns.
+            viewModelScope.launch { pipeline.yieldForFocus() }
+        },
+        onResume = {
+            viewModelScope.launch { pipeline.resumeFromYield() }
+        }
+    )
     private val vad = VadDetector()
     private val pipeline: BargeInVoicePipeline = BargeInVoicePipeline(tts, asr, focus, vad)
     private val llm = LlmClient(settings)

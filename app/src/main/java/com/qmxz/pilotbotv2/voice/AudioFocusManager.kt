@@ -4,22 +4,44 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 
 /**
- * Owns transient, exclusive audio focus for companion speech.
+ * Owns transient, exclusive audio focus for companion speech, and yields it
+ * when another app needs to be heard. This is what makes the companion
+ * "cooperate" with Amap navigation instead of talking over it:
  *
- * - Requested with AUDIOFOCUS_GAIN_TRANSIENT before every utterance batch and
- *   released when the batch finishes, is interrupted, or fails — so music and
- *   navigation are never muted longer than the companion is actually speaking.
- * - AUDIOFOCUS_LOSS / LOSS_TRANSIENT means another app (call, nav) took over:
- *   the caller stops speaking immediately instead of talking over it.
- * - USAGE_MEDIA + CONTENT_TYPE_SPEECH is used deliberately: it is understood
- *   on every API level back to minSdk 26, unlike newer usages.
+ * - While the companion speaks or listens it holds AUDIOFOCUS_GAIN_TRANSIENT.
+ *   When Amap starts an announcement it requests transient focus for itself,
+ *   and the system delivers LOSS_TRANSIENT_CAN_DUCK (or LOSS_TRANSIENT) to
+ *   us. That is [onYield]: the pipeline pauses speech and stops VAD at once,
+ *   so Amap is heard cleanly and its words are not mistaken for the user.
+ * - When Amap releases focus we get AUDIOFOCUS_GAIN: [onResume] replays the
+ *   interrupted sentence from the start and continues the queue (or
+ *   restarts listening, if the yield hit a listening turn).
+ * - AUDIOFOCUS_LOSS is permanent (a call took over, music started): the
+ *   pipeline stops and does not auto-resume ([onFocusLost]).
+ *
+ * Focus is held only while speaking or listening, never while idle, so
+ * music and navigation are never muted longer than a live turn lasts.
+ *
+ * Known limit: callbacks only arrive while the companion holds focus. If a
+ * focus request was denied (another app already holds permanent focus) the
+ * companion speaks anyway — the existing fail-loud policy — and a nav
+ * announcement during that window will not pause it.
+ *
+ * Callbacks are posted to the main thread: the pipeline is single-threaded
+ * by construction and its public methods must run there.
  */
 class AudioFocusManager(
     context: Context,
-    private val onFocusLost: () -> Unit
+    private val onFocusLost: () -> Unit,
+    private val onYield: () -> Unit = {},
+    private val onResume: () -> Unit = {}
 ) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private val audioManager =
         context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -33,11 +55,13 @@ class AudioFocusManager(
             )
             .setOnAudioFocusChangeListener { focusChange ->
                 when (focusChange) {
-                    AudioManager.AUDIOFOCUS_LOSS,
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> onFocusLost()
-                    // GAIN / LOSS_TRANSIENT_CAN_DUCK: nothing to do; we hold
-                    // transient focus only while speaking, so ducking is moot.
-                    else -> Unit
+                    AudioManager.AUDIOFOCUS_LOSS ->
+                        mainHandler.post { onFocusLost() }
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK ->
+                        mainHandler.post { onYield() }
+                    AudioManager.AUDIOFOCUS_GAIN ->
+                        mainHandler.post { onResume() }
                 }
             }
             .build()
