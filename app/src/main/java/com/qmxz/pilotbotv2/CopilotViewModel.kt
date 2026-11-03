@@ -17,6 +17,8 @@ import com.qmxz.pilotbotv2.nav.AmapNavLauncher
 import com.qmxz.pilotbotv2.nav.AmapNavListener
 import com.qmxz.pilotbotv2.nav.AmapNavResult
 import com.qmxz.pilotbotv2.nav.AmapNavStatus
+import com.qmxz.pilotbotv2.nav.AmapNavTarget
+import com.qmxz.pilotbotv2.nav.NavCommandParser
 import com.qmxz.pilotbotv2.nav.AmapNavigationProvider
 import com.qmxz.pilotbotv2.nav.NaviSessionCoordinator
 import com.qmxz.pilotbotv2.service.CompanionService
@@ -208,6 +210,9 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
 
         /** Location older than this counts as unknown speed. */
         const val SPEED_STALE_MS = 60_000L
+
+        /** Location older than this is too stale for a nearby search. */
+        const val LOCATION_STALE_MS = 5 * 60_000L
     }
 
     init {
@@ -233,6 +238,13 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
 
             override fun onFinalResult(text: String) {
                 updateStatus { copy(listening = false, partial = "") }
+                // Voice navigation orders never reach the LLM: acting on
+                // "导航到市政府" beats chatting about it.
+                val navCommand = NavCommandParser.parse(text)
+                if (navCommand != null) {
+                    handleVoiceNavigation(text, navCommand.destination)
+                    return
+                }
                 sendToLlm(text)
             }
 
@@ -455,23 +467,95 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                     TranscriptItem(TranscriptRole.SYSTEM, "导航失败：${result.message}")
                 )
                 is AmapNavResult.Ok -> {
-                    getApplication<Application>().startActivity(
-                        AmapNavLauncher.buildNaviIntent(result.target)
-                    )
-                    companionKeepAlive = true
-                    CompanionService.start(getApplication<Application>())
-                    updateStatus {
-                        copy(
-                            routeSummary =
-                                "高德导航：前往${result.target.name}（高德 App 内导航）"
-                        )
-                    }
+                    launchAmapNav(result.target)
                     postTranscript(
                         TranscriptItem(
                             TranscriptRole.SYSTEM,
                             "已为你打开高德导航，前往${result.target.name}。"
                         )
                     )
+                }
+            }
+        }
+    }
+
+    /** Shared tail of every Amap jump: launch, keep voice alive, show route. */
+    private fun launchAmapNav(target: AmapNavTarget) {
+        getApplication<Application>().startActivity(
+            AmapNavLauncher.buildNaviIntent(target)
+        )
+        companionKeepAlive = true
+        CompanionService.start(getApplication<Application>())
+        updateStatus {
+            copy(routeSummary = "高德导航：前往${target.name}（高德 App 内导航）")
+        }
+    }
+
+    /**
+     * Voice navigation order ("导航到市政府"): search around the current
+     * fix, announce the match, and jump to Amap — no taps. Failures are
+     * spoken, never silently dropped, and never guessed: no fix, no key
+     * or no nearby match means no launch, not a wrong-city launch.
+     *
+     * Unlike the typed dialog, this path never blocks on the
+     * notification-listener gate: opening system settings mid-drive is
+     * worse than navigating without progress display (noted in the
+     * transcript instead).
+     */
+    private fun handleVoiceNavigation(userText: String, destination: String) {
+        postTranscript(TranscriptItem(TranscriptRole.USER, userText))
+        if (destination == "家" || destination == "公司" || destination == "单位") {
+            val message =
+                "还没存${destination}的地址，先说个具体地名，比如导航到市政府，我马上帮你导航。"
+            postTranscript(TranscriptItem(TranscriptRole.SYSTEM, message))
+            pipeline.speakText(message)
+            return
+        }
+        if (!AmapNavLauncher.isAmapInstalled(getApplication<Application>())) {
+            val message = "没装高德地图，先装上高德地图 App 再说导航。"
+            postTranscript(TranscriptItem(TranscriptRole.SYSTEM, message))
+            pipeline.speakText(message)
+            return
+        }
+        val location = coordinator.latestLocation()
+        val now = System.currentTimeMillis()
+        if (location == null || now - lastLocationMs > LOCATION_STALE_MS) {
+            val message = "暂时还没拿到定位，等定位出来再说一次导航。"
+            postTranscript(TranscriptItem(TranscriptRole.SYSTEM, message))
+            pipeline.speakText(message)
+            return
+        }
+        postTranscript(
+            TranscriptItem(TranscriptRole.SYSTEM, "正在为“$destination”找附近的位置…")
+        )
+        AmapNavLauncher.searchNearby(
+            location.latGcj02, location.lngGcj02, destination
+        ) { result ->
+            when (result) {
+                is AmapNavResult.Failed -> {
+                    val message = "导航失败：${result.message}"
+                    postTranscript(TranscriptItem(TranscriptRole.SYSTEM, message))
+                    // The key-missing detail is long; speech gets the short form.
+                    val spoken = if (result.message.startsWith("未配置高德 Key")) {
+                        "还没配置高德 Key，搜不了地点，配好 Key 重新编译后就能语音导航。"
+                    } else {
+                        message
+                    }
+                    pipeline.speakText(spoken)
+                }
+                is AmapNavResult.Ok -> {
+                    val message = "正在为你导航到${result.target.name}。"
+                    postTranscript(TranscriptItem(TranscriptRole.SYSTEM, message))
+                    pipeline.speakText(message)
+                    launchAmapNav(result.target)
+                    if (!AmapNavListener.isEnabled(getApplication<Application>())) {
+                        postTranscript(
+                            TranscriptItem(
+                                TranscriptRole.SYSTEM,
+                                "还没开通知使用权，副驾读不到导航进度；停车后在设置里打开，进度就能实时显示。"
+                            )
+                        )
+                    }
                 }
             }
         }

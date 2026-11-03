@@ -42,6 +42,11 @@ object AmapNavLauncher {
     const val AMAP_PACKAGE = "com.autonavi.minimap"
 
     private const val GEOCODE_URL = "https://restapi.amap.com/v3/geocode/geo"
+    private const val PLACE_AROUND_URL = "https://restapi.amap.com/v3/place/around"
+
+    /** Around search is capped at 50 km by the Amap API. */
+    private const val AROUND_RADIUS_M = 50_000
+
     private val httpClient = OkHttpClient()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -98,6 +103,88 @@ object AmapNavLauncher {
                 post { onResult(AmapNavResult.Failed("地名解析失败：${e.message}")) }
             }
         }.start()
+    }
+
+    /**
+     * Find the nearest POI matching [keyword] around a GCJ-02 fix.
+     * Around search is inherently local, which is what "本地市政府"
+     * means: the nationwide geocode would happily return another
+     * city's 市政府 as its first hit. The nearest match wins, picked
+     * by the returned distance field — never by trusting the API's order.
+     */
+    fun searchNearby(
+        latGcj02: Double,
+        lngGcj02: Double,
+        keyword: String,
+        onResult: (AmapNavResult) -> Unit
+    ) {
+        val key = BuildConfig.AMAP_KEY
+        if (key.isBlank()) {
+            post {
+                onResult(
+                    AmapNavResult.Failed(
+                        "未配置高德 Key：地点搜索需要 Key，请在 local.properties 写 " +
+                            "AMAP_KEY 后重新编译（导航本身不再需要 SDK）"
+                    )
+                )
+            }
+            return
+        }
+        // location is "lng,lat" of plain doubles: no encoding needed, and
+        // the comma must survive (Amap parses it as the separator).
+        val url = PLACE_AROUND_URL +
+            "?key=" + Uri.encode(key) +
+            "&location=" + lngGcj02 + "," + latGcj02 +
+            "&keywords=" + Uri.encode(keyword) +
+            "&radius=" + AROUND_RADIUS_M +
+            "&offset=10&extensions=base&output=json"
+        Thread {
+            try {
+                val request = Request.Builder().url(url).build()
+                val result = httpClient.newCall(request).execute().use { response ->
+                    parseAround(keyword, response.body?.string().orEmpty())
+                }
+                post { onResult(result) }
+            } catch (e: Exception) {
+                post { onResult(AmapNavResult.Failed("地点搜索失败：${e.message}")) }
+            }
+        }.start()
+    }
+
+    private fun parseAround(keyword: String, body: String): AmapNavResult {
+        return try {
+            val json = JSONObject(body)
+            if (json.optString("status") != "1") {
+                return AmapNavResult.Failed(
+                    "地点搜索失败：${json.optString("info")}"
+                )
+            }
+            val pois = json.optJSONArray("pois")
+            if (pois == null || pois.length() == 0) {
+                return AmapNavResult.Failed("附近没找到“$keyword”，换个说法再试")
+            }
+            var best: AmapNavTarget? = null
+            var bestDistance = Double.MAX_VALUE
+            for (i in 0 until pois.length()) {
+                val poi = pois.getJSONObject(i)
+                val parts = poi.optString("location").split(",")
+                if (parts.size != 2) continue
+                val lng = parts[0].toDoubleOrNull() ?: continue
+                val lat = parts[1].toDoubleOrNull() ?: continue
+                val distance =
+                    poi.optString("distance").toDoubleOrNull() ?: Double.MAX_VALUE
+                if (distance < bestDistance) {
+                    bestDistance = distance
+                    best = AmapNavTarget(
+                        poi.optString("name").ifEmpty { keyword }, lat, lng
+                    )
+                }
+            }
+            best?.let { AmapNavResult.Ok(it) }
+                ?: AmapNavResult.Failed("地点搜索结果异常")
+        } catch (e: Exception) {
+            AmapNavResult.Failed("地点搜索失败：${e.message}")
+        }
     }
 
     private fun parseGeocode(query: String, body: String): AmapNavResult {
