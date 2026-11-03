@@ -41,7 +41,9 @@ import com.qmxz.pilotbotv2.voice.SystemTtsProvider
 import com.qmxz.pilotbotv2.voice.VadDetector
 import com.qmxz.pilotbotv2.voice.VoicePipelineListener
 import com.qmxz.pilotbotv2.voice.VoiceSettings
+import com.qmxz.pilotbotv2.voice.VoiceprintRecorder
 import com.qmxz.pilotbotv2.voice.XfyunAsrProvider
+import com.qmxz.pilotbotv2.voice.XfyunVoiceprintVerifier
 import com.qmxz.pilotbotv2.voice.XfyunTtsProvider
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -127,7 +129,9 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         }
     )
     private val vad = VadDetector()
-    private val pipeline: BargeInVoicePipeline = BargeInVoicePipeline(tts, asr, focus, vad)
+    private val voiceprintVerifier = XfyunVoiceprintVerifier(voiceSettings)
+    private val pipeline: BargeInVoicePipeline =
+        BargeInVoicePipeline(tts, asr, focus, vad, voiceprintVerifier)
     private val llm = LlmClient(settings)
     private val memoryStore = MemoryStore(application)
     private val coordinator = NaviSessionCoordinator(
@@ -152,6 +156,9 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     private var manualOverrideUntilMs: Long = 0
     private var foreground: Boolean = true
     private var lastLocationMs: Long = 0
+
+    /** True while a voiceprint enrollment is recording (safety triggers pause). */
+    private var voiceprintEnrolling: Boolean = false
 
     /**
      * Navigation lives in the Amap app (decision 2026-11-03): no in-app
@@ -213,6 +220,10 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
 
         /** Location older than this is too stale for a nearby search. */
         const val LOCATION_STALE_MS = 5 * 60_000L
+
+        /** Voiceprint enrollment: clips per enrollment, ms per clip. */
+        const val ENROLL_CLIPS = 3
+        const val ENROLL_CLIP_MS = 4000L
     }
 
     init {
@@ -234,6 +245,14 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
             // Live ASR partials: shown under the transcript while listening.
             override fun onPartialResult(text: String) {
                 updateStatus { copy(partial = text) }
+            }
+
+            override fun onSpeakerRejected() {
+                // Not the owner's voice: never answer it, never speak
+                // about it — a transcript note is the whole reaction.
+                postTranscript(
+                    TranscriptItem(TranscriptRole.SYSTEM, "已忽略非车主语音。")
+                )
             }
 
             override fun onFinalResult(text: String) {
@@ -411,6 +430,117 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                 "语音引擎已切换为系统语音，下一轮对话生效。"
         }
         postTranscript(TranscriptItem(TranscriptRole.SYSTEM, note))
+    }
+
+    /** True when a voiceprint group is enrolled (speaker gate active). */
+    val isVoiceprintEnrolled: Boolean
+        get() = voiceSettings.isVoiceprintEnrolled
+
+    /**
+     * Voiceprint enrollment: ENROLL_CLIPS clips of ENROLL_CLIP_MS in a
+     * quiet room, then createGroup + one feature per clip on iFlytek.
+     * Saves immediately (like the crash-log button, independent of the
+     * Settings OK/Cancel). Any failure deletes the new group and keeps
+     * the old enrollment (if any) working. Callbacks arrive on the main
+     * thread; the early guards report without touching the enrolling flag.
+     */
+    fun startVoiceprintEnrollment(
+        onProgress: (String) -> Unit,
+        onDone: (Boolean, String) -> Unit
+    ) {
+        val mainHandler =
+            android.os.Handler(android.os.Looper.getMainLooper())
+        fun progress(msg: String) = mainHandler.post { onProgress(msg) }
+        // Terminal path of THIS run: clears the flag, then reports.
+        fun done(ok: Boolean, msg: String) = mainHandler.post {
+            voiceprintEnrolling = false
+            onDone(ok, msg)
+        }
+        if (voiceprintEnrolling) {
+            mainHandler.post { onDone(false, "正在注册声纹，请稍候。") }
+            return
+        }
+        if (pipeline.state != PipelineState.IDLE) {
+            mainHandler.post { onDone(false, "请先结束当前对话再注册声纹。") }
+            return
+        }
+        if (!voiceSettings.isXfyunConfigured) {
+            mainHandler.post { onDone(false, "请先在设置页填好讯飞 Key 再注册声纹。") }
+            return
+        }
+        voiceprintEnrolling = true
+        Thread({
+            try {
+                val clips = mutableListOf<ByteArray>()
+                for (i in 1..ENROLL_CLIPS) {
+                    progress("正在录第 $i/$ENROLL_CLIPS 段，请在安静环境说一句话（4 秒）…")
+                    val clip = VoiceprintRecorder.recordClip(ENROLL_CLIP_MS)
+                    if (clip == null) {
+                        done(false, "第 $i 段没录到声音，请在安静环境重录。")
+                        return@Thread
+                    }
+                    clips.add(clip)
+                }
+                val oldGroupId = voiceSettings.voiceprintGroupId
+                val groupId = "pb_" + System.currentTimeMillis()
+                progress("正在上传声纹特征…")
+                voiceprintVerifier.createGroup(groupId) { created, createError ->
+                    if (!created) {
+                        done(false, "创建声纹库失败：$createError")
+                        return@createGroup
+                    }
+                    uploadVoiceprintFeatures(groupId, clips, 0) { ok, featureError ->
+                        if (!ok) {
+                            voiceprintVerifier.deleteGroup(groupId) {}
+                            done(false, "上传声纹特征失败：$featureError")
+                            return@uploadVoiceprintFeatures
+                        }
+                        voiceSettings.voiceprintGroupId = groupId
+                        if (oldGroupId.isNotBlank() && oldGroupId != groupId) {
+                            voiceprintVerifier.deleteGroup(oldGroupId) {}
+                        }
+                        done(true, "声纹注册成功，门禁已开启：只有你的声音会被响应。")
+                    }
+                }
+            } catch (e: Exception) {
+                done(false, "声纹注册失败：${e.message}")
+            }
+        }, "voiceprint-enroll").also { it.start() }
+    }
+
+    private fun uploadVoiceprintFeatures(
+        groupId: String,
+        clips: List<ByteArray>,
+        index: Int,
+        onDone: (Boolean, String?) -> Unit
+    ) {
+        if (index >= clips.size) {
+            onDone(true, null)
+            return
+        }
+        voiceprintVerifier.addFeature(
+            groupId, "feat${index + 1}", clips[index]
+        ) { ok, error ->
+            if (!ok) onDone(false, error)
+            else uploadVoiceprintFeatures(groupId, clips, index + 1, onDone)
+        }
+    }
+
+    /**
+     * Clears local enrollment and deletes the cloud group (best-effort:
+     * a failed cloud delete leaves an orphaned group, but gating is
+     * already off locally, which is what matters).
+     */
+    fun clearVoiceprint(onDone: (String) -> Unit) {
+        val groupId = voiceSettings.voiceprintGroupId
+        voiceSettings.voiceprintGroupId = ""
+        if (groupId.isBlank()) {
+            onDone("声纹本来就没注册。")
+            return
+        }
+        voiceprintVerifier.deleteGroup(groupId) {
+            onDone("声纹已清除，门禁已关闭。")
+        }
     }
 
     fun refreshHealth() {
@@ -607,6 +737,8 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     private fun evaluateAutoScene() {
         if (released || (!foreground && !companionKeepAlive)) return
         if (pipeline.state != PipelineState.IDLE) return
+        // Enrollment clips must stay clean: no companion speech over them.
+        if (voiceprintEnrolling) return
         val now = System.currentTimeMillis()
         val speed = if (now - lastLocationMs > SPEED_STALE_MS) {
             null

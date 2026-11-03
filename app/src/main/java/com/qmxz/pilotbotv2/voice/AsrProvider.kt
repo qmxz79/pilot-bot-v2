@@ -28,6 +28,13 @@ interface AsrProvider {
     fun startListening(listener: AsrListener)
 
     /**
+     * Raw 16k mono PCM16 captured during the last listening session, if
+     * the engine records audio itself (iFlytek does; system ASR does not).
+     * Used for speaker verification; null means "cannot verify, accept".
+     */
+    fun lastUtteranceAudio(): ByteArray? = null
+
+    /**
      * Discard the current session. Implemented as cancel() rather than
      * stopListening() so no stale partial result is delivered after the user
      * has already moved on.

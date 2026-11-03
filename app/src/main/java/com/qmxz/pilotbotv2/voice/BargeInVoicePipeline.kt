@@ -26,6 +26,9 @@ interface VoicePipelineListener {
     /** Final ASR transcript — the only result the app acts on. */
     fun onFinalResult(text: String)
 
+    /** A final ASR transcript was discarded: it was not the owner's voice. */
+    fun onSpeakerRejected()
+
     /** User-readable failure. Speech continues where possible; this is a note, not a crash. */
     fun onError(message: String)
 }
@@ -77,7 +80,9 @@ class BargeInVoicePipeline(
     private val tts: TtsProvider,
     private val asr: AsrProvider,
     private val focus: AudioFocusManager,
-    private val vad: VadDetector
+    private val vad: VadDetector,
+    /** Null means no speaker gating: every utterance is accepted. */
+    private val speakerVerifier: SpeakerVerifier? = null
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -90,6 +95,9 @@ class BargeInVoicePipeline(
     /** Invalidates in-flight TTS callbacks (stop() may still deliver late ones). */
     private var batchId: Int = 0
     private var utteranceSeq: Int = 0
+
+    /** Invalidates pending voiceprint verifications (a new session drops old ones). */
+    private var verifyGen: Int = 0
 
     /** True while an LLM stream may still deliver more sentences. */
     private var streaming: Boolean = false
@@ -381,6 +389,9 @@ class BargeInVoicePipeline(
             interrupt()
         }
         if (state == PipelineState.LISTENING) return
+        // A new session invalidates any verification still pending from
+        // the previous one (its result must never act on this session).
+        verifyGen++
         state = PipelineState.LISTENING
         // Hold focus while listening too: without it the system never
         // delivers the transient-loss callback, so a nav announcement
@@ -401,7 +412,7 @@ class BargeInVoicePipeline(
                     if (state == PipelineState.LISTENING) {
                         state = PipelineState.IDLE
                         focus.abandon()
-                        listener?.onFinalResult(text)
+                        deliverFinal(text)
                     }
                 }
             }
@@ -428,6 +439,39 @@ class BargeInVoicePipeline(
         state = PipelineState.IDLE
     }
 
+    /**
+     * Final ASR text passes the speaker gate before anyone acts on it.
+     * Unenrolled, too short, or unverifiable audio fails OPEN
+     * (delivered): a dead verification service must not mute the owner.
+     * A scored non-match is discarded with onSpeakerRejected — the
+     * companion never answers a passenger's words, and never speaks
+     * about the rejection either (a transcript note is enough).
+     */
+    private fun deliverFinal(text: String) {
+        val verifier = speakerVerifier
+        val audio = if (verifier?.isEnrolled == true) asr.lastUtteranceAudio() else null
+        if (verifier == null || audio == null || audio.size < MIN_VERIFY_BYTES) {
+            listener?.onFinalResult(text)
+            return
+        }
+        val gen = verifyGen
+        verifier.verify(audio) { result ->
+            mainHandler.post {
+                if (released || gen != verifyGen) return@post
+                when (result) {
+                    is VoiceprintCheck.Scored -> {
+                        if (result.score >= VOICEPRINT_SCORE_THRESHOLD) {
+                            listener?.onFinalResult(text)
+                        } else {
+                            listener?.onSpeakerRejected()
+                        }
+                    }
+                    VoiceprintCheck.Unavailable -> listener?.onFinalResult(text)
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ misc
 
     /** Startup self-check. Never throws; every item reports ok + a message. */
@@ -445,6 +489,7 @@ class BargeInVoicePipeline(
         if (released) return
         released = true
         batchId++
+        verifyGen++
         queue.clear()
         streaming = false
         waitingForSentences = false
@@ -472,5 +517,18 @@ class BargeInVoicePipeline(
         } catch (_: Exception) {
         }
         state = PipelineState.IDLE
+    }
+
+    private companion object {
+        /**
+         * Vendor FAQ recommends 0.6-1 as pass; the low end favours
+         * accepting the owner over rejecting passengers. Tune on device:
+         * raise it if passengers get through, lower it if the owner is
+         * wrongly ignored.
+         */
+        const val VOICEPRINT_SCORE_THRESHOLD = 0.6f
+
+        /** 0.5s of 16k mono PCM16: shorter clips cannot verify reliably. */
+        const val MIN_VERIFY_BYTES = 16000
     }
 }

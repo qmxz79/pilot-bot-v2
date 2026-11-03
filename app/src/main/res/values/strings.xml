@@ -52,4 +52,9 @@
     <string name="crash_log_close">关闭</string>
     <string name="crash_log_share_subject">副驾搭子崩溃日志</string>
     <string name="crash_log_cleared">已清空</string>
+    <string name="voiceprint_label">声纹门禁</string>
+    <string name="voiceprint_status_on">已注册：只有你的声音会被响应</string>
+    <string name="voiceprint_status_off">未注册：所有声音都会被响应</string>
+    <string name="voiceprint_enroll">注册声纹</string>
+    <string name="voiceprint_clear">清除声纹</string>
 </resources>

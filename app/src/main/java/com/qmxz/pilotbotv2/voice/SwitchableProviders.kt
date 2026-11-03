@@ -65,6 +65,12 @@ class SwitchableAsrProvider(
         provider.startListening(listener)
     }
 
+    override fun lastUtteranceAudio(): ByteArray? {
+        // Active stays on the session's engine even after it ends, so a
+        // post-session read still reaches the engine that recorded it.
+        return (active ?: resolve()).lastUtteranceAudio()
+    }
+
     override fun stopListening() {
         (active ?: resolve()).stopListening()
     }

@@ -20,11 +20,14 @@ import kotlin.math.abs
  *   for a car at speed; raise it if road noise causes false interruptions,
  *   lower it if soft speech is missed.
  * - [sustainMs] debounces: a single loud bump (pothole, door) must not
- *   interrupt; only sustained voice does.
+ *   interrupt; only sustained voice does. Raised to 500ms in 2026-11-03
+ *   (car-noise false triggers): burst noise rarely sustains half a
+ *   second, and speaker identity is now the voiceprint gate's job, not
+ *   the amplitude bar's.
  */
 class VadDetector(
     private val threshold: Int = 2800,
-    private val sustainMs: Long = 250,
+    private val sustainMs: Long = 500,
     private val cooldownMs: Long = 1200
 ) {
     @Volatile

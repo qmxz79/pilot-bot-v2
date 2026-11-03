@@ -173,6 +173,45 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
+            android:text="@string/voiceprint_label"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/tv_voiceprint_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="14sp" />
+
+        <!-- Voiceprint enrollment saves immediately, like the crash-log
+             button: it does not wait for Settings OK/Cancel. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_voiceprint_enroll"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:text="@string/voiceprint_enroll"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/btn_voiceprint_clear"
+                android:layout_width="0dp"
+                android:layout_height="56dp"
+                android:layout_weight="1"
+                android:text="@string/voiceprint_clear"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
             android:text="@string/settings_hint"
             android:textColor="#9E9E9E"
             android:textSize="14sp" />

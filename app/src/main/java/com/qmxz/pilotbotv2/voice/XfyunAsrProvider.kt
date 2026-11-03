@@ -70,6 +70,13 @@ class XfyunAsrProvider(
     @Volatile
     private var sessionActive: Boolean = false
 
+    /**
+     * Raw PCM16 of the current session, for speaker verification (see
+     * [lastUtteranceAudio]). Written on the mic thread, read on the
+     * main thread — guarded by synchronizing on this stream.
+     */
+    private val sessionAudio = java.io.ByteArrayOutputStream()
+
     override fun isAvailable(): Boolean = settings.isXfyunConfigured
 
     override fun availabilityMessage(): String {
@@ -94,6 +101,7 @@ class XfyunAsrProvider(
         }
         status2Sent = false
         sentences.clear()
+        synchronized(sessionAudio) { sessionAudio.reset() }
         sessionActive = true
 
         val url = XfyunAuth.buildUrl(
@@ -255,6 +263,17 @@ class XfyunAsrProvider(
                         bytes[i * 2] = (v and 0xFF).toByte()
                         bytes[i * 2 + 1] = ((v shr 8) and 0xFF).toByte()
                     }
+                    // Same frames, kept for speaker verification. Capped
+                    // so a long monologue cannot grow the buffer forever.
+                    synchronized(sessionAudio) {
+                        if (sessionAudio.size() < MAX_SESSION_AUDIO_BYTES) {
+                            val take = minOf(
+                                read * 2,
+                                MAX_SESSION_AUDIO_BYTES - sessionAudio.size()
+                            )
+                            if (take > 0) sessionAudio.write(bytes, 0, take)
+                        }
+                    }
                     val frame = JSONObject()
                     frame.put("data", JSONObject().apply {
                         put("status", 1)
@@ -352,6 +371,12 @@ class XfyunAsrProvider(
         }
     }
 
+    override fun lastUtteranceAudio(): ByteArray? {
+        synchronized(sessionAudio) {
+            return if (sessionAudio.size() > 0) sessionAudio.toByteArray() else null
+        }
+    }
+
     override fun destroy() {
         generation++
         sessionActive = false
@@ -399,6 +424,9 @@ class XfyunAsrProvider(
 
         /** 640 shorts = 1280 bytes = 40ms of 16k mono PCM16, per frame. */
         const val FRAME_SHORTS = 640
+
+        /** Session audio cap: 60s of 16k mono PCM16. */
+        const val MAX_SESSION_AUDIO_BYTES = 16_000 * 2 * 60
 
         /** No read timeout: dictation sessions pause between utterances. */
         fun defaultClient(): OkHttpClient {

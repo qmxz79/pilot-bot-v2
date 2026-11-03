@@ -65,6 +65,23 @@ class VoiceSettings(context: Context) {
             xfyunApiSecret.isNotBlank()
 
     /**
+     * iFlytek voiceprint group id; blank = no voiceprint enrolled, and
+     * the speaker gate is off (every utterance is accepted, as before).
+     * The group lives on iFlytek's servers; this id is only a pointer,
+     * and clearing it locally must be paired with a cloud delete
+     * (see [XfyunVoiceprintVerifier.deleteGroup]).
+     */
+    var voiceprintGroupId: String
+        get() = prefs.getString(KEY_VOICEPRINT_GROUP, "") ?: ""
+        set(value) {
+            prefs.edit().putString(KEY_VOICEPRINT_GROUP, value.trim()).apply()
+        }
+
+    /** Speaker gating is active only when a voiceprint group is enrolled. */
+    val isVoiceprintEnrolled: Boolean
+        get() = voiceprintGroupId.isNotBlank()
+
+    /**
      * The engine actually used: "xfyun" only when the user chose it AND
      * credentials are present. Anything else falls back to system voice —
      * a phone that cannot do cloud voice must still talk, not go silent.
@@ -83,6 +100,7 @@ class VoiceSettings(context: Context) {
         const val KEY_XFYUN_API_KEY = "xfyun_api_key"
         const val KEY_XFYUN_API_SECRET = "xfyun_api_secret"
         const val KEY_XFYUN_VOICE = "xfyun_voice"
+        const val KEY_VOICEPRINT_GROUP = "voiceprint_group_id"
         const val ENGINE_SYSTEM = "system"
         const val ENGINE_XFYUN = "xfyun"
         const val DEFAULT_VOICE = "xiaoyan"

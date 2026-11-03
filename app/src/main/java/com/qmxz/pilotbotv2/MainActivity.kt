@@ -322,6 +322,41 @@ class MainActivity : AppCompatActivity() {
         dialogView.findViewById<Button>(R.id.btn_crash_log).setOnClickListener {
             showCrashLogDialog()
         }
+        // Voiceprint enrollment, same pattern: saves immediately,
+        // independent of Settings OK/Cancel.
+        val tvVoiceprintStatus =
+            dialogView.findViewById<TextView>(R.id.tv_voiceprint_status)
+        val btnVoiceprintEnroll =
+            dialogView.findViewById<Button>(R.id.btn_voiceprint_enroll)
+        val btnVoiceprintClear =
+            dialogView.findViewById<Button>(R.id.btn_voiceprint_clear)
+        fun refreshVoiceprint() {
+            tvVoiceprintStatus.text = if (viewModel.isVoiceprintEnrolled) {
+                getString(R.string.voiceprint_status_on)
+            } else {
+                getString(R.string.voiceprint_status_off)
+            }
+            btnVoiceprintClear.isEnabled = viewModel.isVoiceprintEnrolled
+        }
+        refreshVoiceprint()
+        btnVoiceprintEnroll.setOnClickListener {
+            btnVoiceprintEnroll.isEnabled = false
+            btnVoiceprintClear.isEnabled = false
+            viewModel.startVoiceprintEnrollment(
+                onProgress = { msg -> tvVoiceprintStatus.text = msg },
+                onDone = { _, msg ->
+                    tvVoiceprintStatus.text = msg
+                    btnVoiceprintEnroll.isEnabled = true
+                    refreshVoiceprint()
+                }
+            )
+        }
+        btnVoiceprintClear.setOnClickListener {
+            viewModel.clearVoiceprint { msg ->
+                tvVoiceprintStatus.text = msg
+                refreshVoiceprint()
+            }
+        }
         rgPersona.check(
             when (viewModel.settings.personaId) {
                 "steady" -> R.id.rb_persona_steady

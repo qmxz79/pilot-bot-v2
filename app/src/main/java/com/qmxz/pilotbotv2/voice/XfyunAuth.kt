@@ -10,27 +10,30 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * iFlytek WebSocket auth (same scheme for TTS and ASR).
+ * iFlytek auth (same scheme for TTS, ASR, and the voiceprint HTTP API).
  *
  * From the official docs: the client builds an RFC1123 GMT date, signs
- * "host: <host>\ndate: <date>\nGET <path> HTTP/1.1" with HMAC-SHA256 keyed
- * by the API Secret, base64-encodes the signature into an Authorization
- * header value, then passes authorization/date/host as URL query params.
+ * "host: <host>\ndate: <date>\n<method> <path> HTTP/1.1" with HMAC-SHA256
+ * keyed by the API Secret, base64-encodes the signature into an
+ * Authorization header value, then passes authorization/date/host as URL
+ * query params.
  *
  * Keys are never stored here: they arrive per call from [VoiceSettings],
  * which the user fills in the in-app Settings dialog (device-local only).
  */
 object XfyunAuth {
 
-    /** Signed WebSocket URL for one iFlytek endpoint. */
+    /** Signed URL for one iFlytek endpoint. Defaults are the WebSocket form. */
     fun buildUrl(
         host: String,
         path: String,
         apiKey: String,
-        apiSecret: String
+        apiSecret: String,
+        method: String = "GET",
+        scheme: String = "wss"
     ): String {
         val date = rfc1123Now()
-        val signatureOrigin = "host: $host\ndate: $date\nGET $path HTTP/1.1"
+        val signatureOrigin = "host: $host\ndate: $date\n$method $path HTTP/1.1"
         val signature = hmacSha256Base64(apiSecret, signatureOrigin)
         val authorizationOrigin =
             "api_key=\"$apiKey\", algorithm=\"hmac-sha256\", " +
@@ -39,7 +42,7 @@ object XfyunAuth {
             authorizationOrigin.toByteArray(Charsets.UTF_8),
             Base64.NO_WRAP
         )
-        return "wss://$host$path" +
+        return "$scheme://$host$path" +
             "?authorization=${urlEncode(authorization)}" +
             "&date=${urlEncode(date)}" +
             "&host=${urlEncode(host)}"
