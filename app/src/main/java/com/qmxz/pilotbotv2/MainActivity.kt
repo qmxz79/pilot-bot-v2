@@ -1,7 +1,12 @@
 package com.qmxz.pilotbotv2
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -21,6 +26,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.qmxz.pilotbotv2.diagnostics.CrashLog
 import com.qmxz.pilotbotv2.safety.DriveScene
+import com.qmxz.pilotbotv2.service.CompanionService
 import com.qmxz.pilotbotv2.ui.TranscriptAdapter
 import com.qmxz.pilotbotv2.ui.WaveformView
 import kotlinx.coroutines.launch
@@ -33,7 +39,9 @@ import kotlinx.coroutines.launch
  * 2. Wire buttons -> ViewModel calls (mic, interrupt, scenes, send, settings).
  * 3. Render ViewModel state (transcript rows, waveform, status lines).
  * 4. Own the runtime-permission request and the settings dialog.
- * 5. Converge lifecycles: onPause stops speech, onDestroy releases everything.
+ * 5. Converge lifecycles: onPause stops speech (unless the companion
+ *    service is keeping voice alive during Amap navigation), onDestroy
+ *    releases everything.
  *
  * Everything else (voice pipeline, LLM, memory, persona, nav, health) lives
  * in its own module. If this file ever approaches 400 lines, something has
@@ -53,6 +61,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var micButton: MaterialButton
     private lateinit var interruptButton: Button
     private lateinit var textInput: EditText
+
+    /** The companion service ended itself; clear the ViewModel's keep-alive flag. */
+    private val companionStoppedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (::viewModel.isInitialized) {
+                viewModel.onCompanionStopped()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,6 +121,17 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.btn_scene_cruise).setOnClickListener {
             viewModel.onSceneSelected(DriveScene.CRUISE)
+        }
+
+        val companionFilter = IntentFilter(CompanionService.ACTION_COMPANION_STOPPED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(
+                companionStoppedReceiver,
+                companionFilter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            registerReceiver(companionStoppedReceiver, companionFilter)
         }
 
         requestPermissionsIfNeeded()
@@ -193,9 +221,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Destination dialog. One field, three actions: start a route to the
-     * typed place, end the active route, or cancel. Kept here (not in a
-     * layout file) because it is a single input, like the text fallback.
+     * Destination dialog. One field, three actions: jump to Amap
+     * navigation for the typed place, end background companionship, or
+     * cancel. Kept here (not in a layout file) because it is a single
+     * input, like the text fallback.
      */
     private fun showNavigationDialog() {
         val input = EditText(this).apply {
@@ -208,11 +237,11 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(R.string.nav_start) { _, _ ->
                 val destination = input.text.toString().trim()
                 if (destination.isNotEmpty()) {
-                    viewModel.startNavigation(destination)
+                    viewModel.startAmapNavigation(destination)
                 }
             }
             .setNeutralButton(R.string.nav_end) { _, _ ->
-                viewModel.stopNavigation()
+                viewModel.stopCompanion()
             }
             .setNegativeButton(R.string.dialog_cancel, null)
             .show()
@@ -291,9 +320,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
-        // Never keep talking or listening while backgrounded: the permission
-        // dialog itself pauses the Activity, and a companion that speaks to
-        // an empty car is a bug, not a feature.
+        // Never keep talking or listening while backgrounded — except
+        // during an Amap-nav session, where the companion service keeps
+        // voice alive and the driver is still there (see onPaused).
         if (::viewModel.isInitialized) {
             viewModel.onPaused()
         }
@@ -301,6 +330,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(companionStoppedReceiver)
         if (::viewModel.isInitialized) {
             viewModel.release()
         }

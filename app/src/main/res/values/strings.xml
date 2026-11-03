@@ -35,10 +35,14 @@
     <string name="xfyun_voice_label">讯飞发音人（默认 xiaoyan）</string>
     <string name="dialog_ok">保存</string>
     <string name="dialog_cancel">取消</string>
-    <string name="nav_button">导航</string>
-    <string name="nav_not_started">导航未启动</string>
-    <string name="nav_dialog_title">导航去哪</string>
+    <string name="nav_button">高德导航</string>
+    <string name="nav_not_started">高德导航未启动</string>
+    <string name="nav_dialog_title">高德导航去哪</string>
     <string name="nav_dialog_hint">输入目的地，比如：百色汽车站</string>
     <string name="nav_start">开始导航</string>
-    <string name="nav_end">结束导航</string>
+    <string name="nav_end">结束陪伴</string>
+    <string name="companion_channel_name">副驾搭子陪伴</string>
+    <string name="companion_notification_title">副驾搭子正在陪伴</string>
+    <string name="companion_notification_text">高德导航进行中，语音陪伴保持在线</string>
+    <string name="companion_notification_stop">结束陪伴</string>
 </resources>

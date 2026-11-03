@@ -54,9 +54,10 @@ app/src/main/java/com/qmxz/pilotbotv2/
 │   ├── AmapNavigationProvider.kt # 高德定位 SDK（反射隔离，无二进制依赖）
 │   ├── SystemGpsFallbackProvider.kt # LocationManager + Geocoder 兜底
 │   ├── NaviSessionCoordinator.kt   # 选路 + 失败切换
-│   ├── RouteProvider.kt       # 算路接口 + RouteStep/PlannedRoute（含步骤折线）
-│   ├── AmapRouteProvider.kt   # 高德算路/地理编码（反射隔离，无二进制依赖）
-│   └── NavigationSession.kt   # 导航会话：里程推进步骤、到点播报指令、偏离重规划
+│   ├── AmapNavLauncher.kt     # 跳转高德 App 导航：URI intent + HTTP 地理编码，无 SDK
+│   └── AmapNavListener.kt     # 读高德导航通知：下一指令/剩余距离/结束（关键词容错解析）
+├── service/
+│   └── CompanionService.kt    # 前台保活：高德在前台时语音不断（话筒+定位类型）
 ├── llm/
 │   ├── LlmClient.kt           # OpenAI 兼容、OkHttp SSE 流式
 │   ├── LlmSettings.kt         # SharedPreferences（Key 只存本机）
@@ -79,11 +80,14 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
 ## 构建步骤
 
 1. Android Studio 打开本目录（AGP 8.2.2、Kotlin 1.9.22、JDK 17、minSdk 26、targetSdk 34）。
-2. 高德（可选，不配也能跑系统 GPS）：
-   - 运行 `scripts/fetch-amap-sdk.sh`，按提示从高德官网下载定位 SDK，把 `.aar` 放到 `app/libs/`；
-   - 在 `app/build.gradle` 的 dependencies 里加一行（用真实文件名）：
+2. 高德：导航不再需要任何 SDK（2026-11-03 起走高德 App），但地名解析
+   仍需 Key；定位 SDK 仍是可选（不配自动系统 GPS）：
+   - 在项目根目录 `local.properties` 写 `AMAP_KEY=你的高德Key`（该文件已 gitignore，绝不提交）；
+   - 如需高德定位（可选）：运行 `scripts/fetch-amap-sdk.sh`，按提示从高德
+     官网下载定位 SDK，把 `.aar` 放到 `app/libs/`，并在 `app/build.gradle`
+     的 dependencies 里加一行（用真实文件名）：
      `implementation(files("libs/amap-location.aar"))`；
-   - 在项目根目录 `local.properties` 写 `AMAP_KEY=你的高德Key`（该文件已 gitignore，绝不提交）。
+   - 手机上须安装高德地图 App，并给副驾搭子开通知使用权（首次导航时会提示）。
 3. LLM Key（必需，否则对话会明示“未配置”）：装好 App 后点「设置」，填
    OpenAI 兼容地址、Key、模型名（默认 DeepSeek 地址与模型），再选人设。
 4. 讯飞云语音（无谷歌语音服务的手机必需，否则语音不可用）：在讯飞开放平台
@@ -102,8 +106,10 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
 - [ ] 导航降级：拔掉高德 Key 或删 AAR，App 自动用系统 GPS 且界面明示来源
 - [ ] 无声排查：关掉系统语音数据/拒录音权限，App 明示降级且文字输入仍可用
 - [ ] 安全自动触发：22 点后开车自动切深夜并开口；慢行 90 秒自动切堵车；连续驾驶 2 小时自动提醒疲劳；手动选场景后 30 分钟内不自动打扰；切后台时不自动开口
-- [ ] 导航：点「导航」输入目的地，算路成功并逐条播报；到点切换步骤，到达提示；无 SDK/Key 时明示不可用、不崩溃
-- [ ] 导航偏离重规划：故意走错一个路口，开出路线 100 米外连续 3 次定位后自动播报重规划并切新路线；重规划失败时仍按原路线指引、不刷屏
+- [ ] 高德导航：点「高德导航」输入目的地，跳进高德 App 开始导航；路线行实时显示高德通知的下一指令与剩余距离；高德导航结束时 App 内提示结束
+- [ ] 通知授权：首次导航时未开通知使用权会提示并打开系统设置，开通后才有导航进度
+- [ ] 后台陪伴：高德在前台时副驾搭子语音不断（安全提醒仍能开口）；点通知栏「结束陪伴」或 App 内「结束陪伴」后停止
+- [ ] 无高德/无 Key：未装高德 App 或未配 Key 时明示原因、不崩溃（导航不再需要任何 SDK；Key 只用于地名解析）
 
 ## 已知未验证项（诚实清单，见代码内注释）
 
@@ -113,13 +119,15 @@ OkHttp。**没有任何 3D/GL/地图二进制依赖进仓库。**
 - **高德反射调用未核对实物 SDK**：方法名按公开的高德定位 SDK API 写（含著名的
   `Hight_Accuracy` 拼写），但手头没有 SDK jar；若签名有出入，provider 会优雅
   降级到系统 GPS，不会崩溃——首次接 SDK 的真机联调需确认。
-- **高德算路/地理编码反射签名未核对实物 SDK**：RouteSearch / GeocodeSearch 的
-  类名与方法名按公开 API 写，失败时明示原因、不崩溃；首次联调需确认。
-  步骤推进用行驶里程而非地图匹配，复杂立交/平行路可能早报或晚报，路线行
-  会实时显示下一步以便核对。
-- **偏离检测依赖步骤折线**：DriveStep.getPolyline 若在实物 SDK 中不存在或
-  形状不同，该步跳过检测（不报错、不误触发）；检测阈值 100 米 × 连续 3 次
-  定位、触发后冷却 60 秒，市区 GPS 漂移引起的误触发以此为界。
+- **导航已改为高德 App（2026-11-03 决策）**：自研算路、逐条播报、偏离重
+  规划已下线（RouteProvider / AmapRouteProvider / NavigationSession 已删），
+  不再需要搜索 SDK；定位的高德 SDK 仍是可选（没它自动系统 GPS）。
+- **高德通知解析是关键词容错**：通知文案由高德定、版本一变就可能失效，
+  解析不到的只显示原文、不猜；只能拿到通知里有的下一指令与剩余距离时间，
+  拿不到完整路线；高德语音播报的音频本身无法拦截。
+- **后台陪伴的边界**：前台服务保的是进程优先级，不是永生；用户把 App
+  划掉后语音仍会停，需重开；对话仍需回到 App 里进行，导航期间副驾搭子
+  只主动播报安全提醒和导航结束，不监听。
 - **讯飞云语音未经真机验证**：TTS/ASR 的 WebSocket 协议按讯飞官方文档实现，
   但本机无 Android SDK、无法编译，真机联调需确认：TTS 每句一次握手带来的
   延迟、ASR 的 pgs 修正与 ls 结束、弱网下的错误提示；无 key 时自动回落系统

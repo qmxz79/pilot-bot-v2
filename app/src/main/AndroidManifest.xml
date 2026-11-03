@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Foreground companion service (microphone + location types). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <!-- Hardware is optional: missing mic/GPS is reported by HealthCheck, never a crash. -->
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -29,6 +33,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Keep-alive while the Amap app is in front (see CompanionService). -->
+        <service
+            android:name=".service.CompanionService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|location" />
+        <!-- Reads the Amap app's navigation notification; needs the user
+             to enable notification access in system settings. -->
+        <service
+            android:name=".nav.AmapNavListener"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

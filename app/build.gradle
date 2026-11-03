@@ -24,7 +24,8 @@ android {
         versionName "2.0.0"
         // Manifest placeholder used by the Amap SDK meta-data (harmless when empty).
         manifestPlaceholders = [AMAP_KEY: amapKey]
-        // BuildConfig field used by AmapNavigationProvider for its self-check.
+        // BuildConfig field used by AmapNavLauncher for REST geocode.
+        // Navigation needs no SDK; the key is only for place-name lookup.
         buildConfigField "String", "AMAP_KEY", "\"${amapKey}\""
     }
 

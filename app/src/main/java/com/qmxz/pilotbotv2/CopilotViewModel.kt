@@ -13,13 +13,13 @@ import com.qmxz.pilotbotv2.llm.LlmSettings
 import com.qmxz.pilotbotv2.memory.MemoryExtractor
 import com.qmxz.pilotbotv2.memory.MemoryRetriever
 import com.qmxz.pilotbotv2.memory.MemoryStore
+import com.qmxz.pilotbotv2.nav.AmapNavLauncher
+import com.qmxz.pilotbotv2.nav.AmapNavListener
+import com.qmxz.pilotbotv2.nav.AmapNavResult
+import com.qmxz.pilotbotv2.nav.AmapNavStatus
 import com.qmxz.pilotbotv2.nav.AmapNavigationProvider
-import com.qmxz.pilotbotv2.nav.AmapRouteProvider
-import com.qmxz.pilotbotv2.nav.GeocodeResult
-import com.qmxz.pilotbotv2.nav.NavigationSession
 import com.qmxz.pilotbotv2.nav.NaviSessionCoordinator
-import com.qmxz.pilotbotv2.nav.RouteProvider
-import com.qmxz.pilotbotv2.nav.RouteResult
+import com.qmxz.pilotbotv2.service.CompanionService
 import com.qmxz.pilotbotv2.nav.SystemGpsFallbackProvider
 import com.qmxz.pilotbotv2.persona.PersonaCard
 import com.qmxz.pilotbotv2.persona.PersonaPresets
@@ -63,7 +63,7 @@ data class UiStatus(
     val scene: DriveScene = DriveScene.CRUISE,
     val healthSummary: String = "自检中…",
     val navSummary: String = "定位：初始化中…",
-    val routeSummary: String = "导航未启动"
+    val routeSummary: String = "高德导航未启动"
 )
 
 /**
@@ -140,19 +140,15 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     private var lastLocationMs: Long = 0
 
     /**
-     * M3 navigation. The route provider is reflection-isolated (same
-     * pattern as the location providers): without the Amap Search SDK
-     * or key, startNavigation fails with a readable message instead of
-     * crashing. The session turns location fixes into spoken maneuver
-     * announcements; navigation outranks chat (see NavigationSession).
+     * Navigation lives in the Amap app (decision 2026-11-03): no in-app
+     * routing, no step announcements, no re-planning. The companion only
+     * launches Amap and reads its notification progress (AmapNavStatus).
+     * Positioning for scene detection still comes from the coordinator.
      */
-    private val routeProvider: RouteProvider = AmapRouteProvider(application)
-    private val navSession = NavigationSession()
+    private var amapNavActive = false
 
-    /** Last planned destination, kept so an off-route re-plan needs no new geocode. */
-    private var navDestinationName: String? = null
-    private var navDestinationLatGcj02: Double? = null
-    private var navDestinationLngGcj02: Double? = null
+    /** True while the foreground companion service runs (Amap-nav session). */
+    private var companionKeepAlive = false
 
     private val _transcriptEvents =
         MutableSharedFlow<TranscriptItem>(extraBufferCapacity = 64)
@@ -250,15 +246,22 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
-        navSession.onAnnouncement = { text ->
-            postTranscript(TranscriptItem(TranscriptRole.SYSTEM, "导航：$text"))
-            pipeline.speakText(text)
-        }
-        navSession.onRouteUpdate = { summary ->
-            updateStatus { copy(routeSummary = summary) }
-        }
-        navSession.onOffRoute = {
-            replanNavigation()
+        viewModelScope.launch {
+            AmapNavStatus.info.collect { info ->
+                if (info != null) {
+                    amapNavActive = true
+                    val detail = info.nextInstruction
+                        ?: info.rawText.lineSequence().firstOrNull().orEmpty()
+                    val remaining = info.remaining?.let { " · $it" } ?: ""
+                    updateStatus { copy(routeSummary = "高德导航：$detail$remaining") }
+                } else if (amapNavActive) {
+                    amapNavActive = false
+                    updateStatus { copy(routeSummary = "高德导航未启动") }
+                    postTranscript(
+                        TranscriptItem(TranscriptRole.SYSTEM, "高德导航已结束。")
+                    )
+                }
+            }
         }
         coordinator.start()
         viewModelScope.launch {
@@ -266,7 +269,6 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                 currentSpeedKmh = location?.speedKmh ?: 0f
                 if (location != null) {
                     lastLocationMs = System.currentTimeMillis()
-                    navSession.onLocation(location)
                     evaluateAutoScene()
                 }
                 refreshNavSummary()
@@ -402,116 +404,95 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
         coordinator.start()
     }
 
-    /** Plan a route to [destination] from the current fix and start guidance. */
-    fun startNavigation(destination: String) {
+    /**
+     * Navigation via the Amap app (decision 2026-11-03): resolve the
+     * destination name to GCJ-02 over plain HTTP (no SDK), jump to Amap,
+     * and start the foreground companion service so voice keeps working
+     * while Amap is in front. Progress comes back through AmapNavListener,
+     * not from in-app routing. The companion never repeats maneuvers;
+     * it only uses progress as conversation context.
+     */
+    fun startAmapNavigation(destination: String) {
         val name = destination.trim()
         if (name.isEmpty()) return
-        val origin = coordinator.latestLocation()
-        if (origin == null) {
+        if (!AmapNavLauncher.isAmapInstalled(application)) {
             postTranscript(
                 TranscriptItem(
                     TranscriptRole.SYSTEM,
-                    "导航失败：还没有定位，等定位就绪再试。"
+                    "未安装高德地图，请先安装高德地图 App 再导航。"
                 )
             )
+            return
+        }
+        if (!AmapNavListener.isEnabled(application)) {
+            postTranscript(
+                TranscriptItem(
+                    TranscriptRole.SYSTEM,
+                    "要读高德导航进度，需要先开通知使用权，正在打开系统设置…"
+                )
+            )
+            AmapNavListener.openSettings(application)
             return
         }
         postTranscript(
-            TranscriptItem(TranscriptRole.SYSTEM, "正在规划去“$name”的路线…")
+            TranscriptItem(TranscriptRole.SYSTEM, "正在为“$name”找位置…")
         )
-        routeProvider.geocode(name, null) { geo ->
-            when (geo) {
-                is GeocodeResult.Failed -> postTranscript(
-                    TranscriptItem(TranscriptRole.SYSTEM, "导航失败：${geo.message}")
+        AmapNavLauncher.geocode(name) { result ->
+            when (result) {
+                is AmapNavResult.Failed -> postTranscript(
+                    TranscriptItem(TranscriptRole.SYSTEM, "导航失败：${result.message}")
                 )
-                is GeocodeResult.Ok -> {
-                    navDestinationName = name
-                    navDestinationLatGcj02 = geo.latGcj02
-                    navDestinationLngGcj02 = geo.lngGcj02
-                    routeProvider.planRoute(
-                        origin.latGcj02,
-                        origin.lngGcj02,
-                        geo.latGcj02,
-                        geo.lngGcj02,
-                        name
-                    ) { result ->
-                        when (result) {
-                            is RouteResult.Failed -> postTranscript(
-                                TranscriptItem(
-                                    TranscriptRole.SYSTEM,
-                                    "导航失败：${result.message}"
-                                )
-                            )
-                            is RouteResult.Ok -> navSession.start(result.route)
-                        }
+                is AmapNavResult.Ok -> {
+                    application.startActivity(
+                        AmapNavLauncher.buildNaviIntent(result.target)
+                    )
+                    companionKeepAlive = true
+                    CompanionService.start(application)
+                    updateStatus {
+                        copy(
+                            routeSummary =
+                                "高德导航：前往${result.target.name}（高德 App 内导航）"
+                        )
                     }
+                    postTranscript(
+                        TranscriptItem(
+                            TranscriptRole.SYSTEM,
+                            "已为你打开高德导航，前往${result.target.name}。"
+                        )
+                    )
                 }
             }
         }
-    }
-
-    fun stopNavigation() {
-        if (!navSession.isActive()) {
-            postTranscript(
-                TranscriptItem(TranscriptRole.SYSTEM, "当前没有进行中的导航。")
-            )
-            return
-        }
-        navSession.stop()
-        navDestinationName = null
-        navDestinationLatGcj02 = null
-        navDestinationLngGcj02 = null
     }
 
     /**
-     * Off-route recovery. Re-plans from the current fix to the stored
-     * destination (no new geocode: the destination has not moved). On
-     * success the session restarts with the new route and announces the
-     * re-plan; on failure the old route keeps guiding and the session's
-     * 60-second cooldown bounds the next attempt, so a dead network
-     * cannot spam the driver.
+     * Stops the foreground companion service. Navigation itself ends in
+     * the Amap app; this only ends background companionship.
      */
-    private fun replanNavigation() {
-        val name = navDestinationName
-        val destLat = navDestinationLatGcj02
-        val destLng = navDestinationLngGcj02
-        val origin = coordinator.latestLocation()
-        if (name == null || destLat == null || destLng == null || origin == null) {
-            return
-        }
+    fun stopCompanion() {
+        companionKeepAlive = false
+        CompanionService.stop(application)
         postTranscript(
-            TranscriptItem(TranscriptRole.SYSTEM, "已偏离路线，正在重新规划…")
+            TranscriptItem(TranscriptRole.SYSTEM, "已结束后台陪伴。")
         )
-        routeProvider.planRoute(
-            origin.latGcj02,
-            origin.lngGcj02,
-            destLat,
-            destLng,
-            name
-        ) { result ->
-            when (result) {
-                is RouteResult.Failed -> postTranscript(
-                    TranscriptItem(
-                        TranscriptRole.SYSTEM,
-                        "重新规划失败：${result.message}，仍按原路线指引。"
-                    )
-                )
-                is RouteResult.Ok -> {
-                    // The driver may have ended navigation while the
-                    // re-plan was in flight; never restart it behind
-                    // their back.
-                    if (navSession.isActive()) {
-                        navSession.start(result.route, isReplan = true)
-                    }
-                }
-            }
-        }
     }
 
-    /** App backgrounded: stop speech/listening/LLM so nothing talks blindly. */
+    /** The service's notification button ended the companion without going through here. */
+    fun onCompanionStopped() {
+        companionKeepAlive = false
+    }
+
+    /**
+     * App backgrounded. Default rule: stop speech/listening/LLM so
+     * nothing talks blindly. Exception: during an Amap-nav session the
+     * companion service is keeping voice alive, so backgrounding to
+     * Amap must not cut speech — the driver is still there, listening.
+     */
     fun onPaused() {
         foreground = false
-        onInterrupt()
+        if (!companionKeepAlive) {
+            onInterrupt()
+        }
     }
 
     /** App foregrounded again: auto scene switches may fire. */
@@ -521,12 +502,14 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * One auto-scene evaluation. Fires at most one switch, only when the
-     * pipeline is IDLE and the app is foregrounded; otherwise this tick
-     * is skipped and a later one retries (the detector's sustained
-     * durations make a missed tick harmless).
+     * pipeline is IDLE and the app is foregrounded (or the companion
+     * service is keeping voice alive during Amap navigation — the
+     * driver is still there, so safety speech stays allowed); otherwise
+     * this tick is skipped and a later one retries (the detector's
+     * sustained durations make a missed tick harmless).
      */
     private fun evaluateAutoScene() {
-        if (released || !foreground) return
+        if (released || (!foreground && !companionKeepAlive)) return
         if (pipeline.state != PipelineState.IDLE) return
         val now = System.currentTimeMillis()
         val speed = if (now - lastLocationMs > SPEED_STALE_MS) {
