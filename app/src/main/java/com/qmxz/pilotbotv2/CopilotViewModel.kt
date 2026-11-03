@@ -415,7 +415,7 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
     fun startAmapNavigation(destination: String) {
         val name = destination.trim()
         if (name.isEmpty()) return
-        if (!AmapNavLauncher.isAmapInstalled(application)) {
+        if (!AmapNavLauncher.isAmapInstalled(getApplication<Application>())) {
             postTranscript(
                 TranscriptItem(
                     TranscriptRole.SYSTEM,
@@ -424,14 +424,14 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
             )
             return
         }
-        if (!AmapNavListener.isEnabled(application)) {
+        if (!AmapNavListener.isEnabled(getApplication<Application>())) {
             postTranscript(
                 TranscriptItem(
                     TranscriptRole.SYSTEM,
                     "要读高德导航进度，需要先开通知使用权，正在打开系统设置…"
                 )
             )
-            AmapNavListener.openSettings(application)
+            AmapNavListener.openSettings(getApplication<Application>())
             return
         }
         postTranscript(
@@ -443,11 +443,11 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
                     TranscriptItem(TranscriptRole.SYSTEM, "导航失败：${result.message}")
                 )
                 is AmapNavResult.Ok -> {
-                    application.startActivity(
+                    getApplication<Application>().startActivity(
                         AmapNavLauncher.buildNaviIntent(result.target)
                     )
                     companionKeepAlive = true
-                    CompanionService.start(application)
+                    CompanionService.start(getApplication<Application>())
                     updateStatus {
                         copy(
                             routeSummary =
@@ -471,7 +471,7 @@ class CopilotViewModel(application: Application) : AndroidViewModel(application)
      */
     fun stopCompanion() {
         companionKeepAlive = false
-        CompanionService.stop(application)
+        CompanionService.stop(getApplication<Application>())
         postTranscript(
             TranscriptItem(TranscriptRole.SYSTEM, "已结束后台陪伴。")
         )
